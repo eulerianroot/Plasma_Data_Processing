@@ -1,0 +1,64 @@
+% Constants
+me = 9.11e-31; % electron mass
+AMU_Ar = 40; % AMU of Argon
+amu = 1.66e-27; $ AMU to mass conversion
+mAr = AMU_Ar*amu; % mass of argon
+eps = 8.85e-12; % vacuum permittivity constant
+kB = 1.38e-23; % Boltzmann's constant
+elm = 1.602e-19; % Fundamental charge constant
+h = 6.63e-34; %planck's cst
+Ui = 15.7; %ionization energy Argon, eV
+
+% ICP characteristics
+Lch = 0.46; %chamber length, m
+Dch = 0.298; %chamber diameter, m
+Rch = Dch/2;
+A_plates = pi*Rch^2; %area of the plates
+
+% Plasma operating parameters
+P = [350, 400, 450, 500, 525]; % plasma input power, W
+p_analysis=logspace(-2,2,100)'; % pressure, pascals
+ng_analysis = p_analysis./(1.38e-23*300); % neutral density at 300K 
+
+Kiz0 = 5e-14; % Ionization rate coefficient,  m^3/s, Lieb. pg 80
+sig_i = 1e-18; %estimated cross section ion-atom elastic and charge transfer, Ti ~0.05, m^2 (see lieb. pg 80)
+lam_i = 1./(ng_analysis.*sig_i); %MFP for ions
+hl = 0.86.*(3 + Lch./(2.*lam_i)).^(-1/2); %rel. dens. length, see lieb p 305
+
+hr = 0.8.*(4+ Rch./lam_i ).^(-1/2); %relative plasma density radius
+deff = 0.5.* Rch*Lch./(Rch.*hl+Lch.*hr); %effective plasma diameter
+Aeff = 2*pi*Rch*(Rch.*hl+Lch.*hr); % Effective plasma area
+
+%% Te vs pressure & effective plasma size plot
+
+for i=1:length(ng_analysis)
+    [Te_analysis(i),fval] = fsolve(@(Te) findTe(Te, Ui, Lch, ng_analysis(i), Kiz0, sig_i), 4.0);
+end
+
+f = fit(p_analysis, Te_analysis, 'power2');
+Te_analysis = f.a.*p_analysis.^(f.b) + f.c;
+
+
+%% Electron Density 
+Ec = 40; %an estimation based on roughly what Te will be.
+ET = Ec+ 2.*Te_analysis+5.2.*Te_analysis;
+uB_analysis = sqrt(elm.*Te_analysis./mAr);
+
+for i = 1:length(P)
+    for j = 1:length(p_analysis)
+        n0_ICP(j,i) = P(i)./(elm.*uB_analysis(j,1).*Aeff(j,1).*ET(j,1)); % plasma density, col's = power, rows = press 
+    end
+end
+
+%% Internal Functions
+
+function F = findTe(Te,Ui,Lch,ng_samp,K_iz0,sig_i)
+    AMU_Ar = 40;
+    amu = 1.66e-27;
+    mAr = AMU_Ar*amu; % mass of argon
+    elm=1.602e-19;
+    ng_samp;
+    lam_i_samp = 1/(ng_samp.*sig_i); 
+    hl_samp = 0.86.*(3 + Lch./(2.*lam_i_samp) ).^(-1/2); %rel. dens. length, one value of ion MFP, see Chabert eqn 3.82    +1/5.*0.05./Te.*(Lch./lam_i_samp).^2
+	F = Te - Ui/(log((Lch*ng_samp*K_iz0)/(2*hl_samp*sqrt((elm*Te)/mAr) ) )); %eqn 3.86, Chabert, p 93
+end
