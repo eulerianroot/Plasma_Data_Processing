@@ -1,0 +1,1788 @@
+% Constants
+c = 299792458;
+L0 = 668.613808; % center wavelength, 667.7282e-9
+Lam0_ArI = 667.9125;
+Lam0_ArII68 = L0;
+Lam0_ArII64 = 664.55;
+elm = 1.602e-19;
+Nu0_ArIIAbs = c/(L0*1e-9); % Central frequency of Ar-II transition, converted to frequency from absolute value of the wavelength
+MI2 = 126.90447*1.66e-27*2; % Iodine
+AMU_Ar = 40;
+amu = 1.66e-27;
+mAr = AMU_Ar*amu; % mass of argon
+
+% Load in data: 
+
+Time_col = 1;
+Pzt_col = 2;
+Et_col = 3;
+I_col = 4;
+PMT_col = 5;
+
+Windows = 0; % whether the OS is linux or windows
+if Windows == 1
+    folderName = myMainFolderW; %uigetdir();
+    [Time,...
+     N,...
+     numFiles,...
+     EtSig,...
+    PztSig,...
+    FlSig,...
+    ISig]     = readDataW(folderName, delimiterIn, headerLinesIn, fileType,...
+                             Time_col, Pzt_col, Et_col, PMT_col, I_col);
+else
+    folderName = myMainFolderL; %uigetdir();
+    [Time,...
+     N,...
+     numFiles,...
+     EtSig,...
+     PztSig,...
+     FlSig,...
+     ISig]     = readDataL(folderName, delimiterIn, headerLinesIn, fileType, ...
+                             Time_col, Pzt_col, Et_col, PMT_col, I_col);
+end
+
+FullInd = 1:length(PztSig(:,1)); % Full index of data arrays
+
+% Smoothing Signal data
+% Iodine
+N_sm_I = 80;
+ISig_Final = zeros(size(ISig,1),size(ISig,2));
+
+% Fluorescence signal
+N_sm_Fl = 1000;
+
+for i = 1:numFiles
+    ISig_Final(:,i) = smooth(ISig(:,i), N_sm_I, 'loess');
+    FlSig_Final(:,i) = smooth(FlSig(:,i), N_sm_Fl, 'loess');
+    FlSig_FinalSM(:,i)  = smooth(FlSig(:,i), 7000, 'loess'); % Extra smoothing for the Envelope error calculations
+end
+
+%% PZT TTL Analysis
+% Designed to analyze 1 scan up and one scan down, which has been averaged 64 times on the oscilloscope.
+
+% Pre-allocate variables here
+
+% Determine UP and DOWN scan starting points based on the Laser controller's TTL signal
+for j = 1:numFiles
+    % Set start and end points of the Up Scans and Down Scans
+    TTLUp(1,j)          = find(PztSig(:,j) > 4, 1); %diff(PztSig(:,j)) > 3,1
+    TTLDwn(1,j)         = find(diff(PztSig(:,j)) < -3,1);
+    
+    DeltaScanInd{1,j}   = TTLDwn(1,j) - TTLUp(1,j);
+    
+    EndScanDwnInd(1,j)  = TTLUp(1,j) + round(DeltaScanInd{1,j}/2);
+    StartScanDwnInd(1,j)= EndScanDwnInd(1,j) - DeltaScanInd{1,j};
+    ScanDwnInds{1,j}    = FullInd(StartScanDwnInd(1,j):EndScanDwnInd(1,j)); 
+    
+    StartScanUpInd(1,j)  = TTLUp(1,j) + round(DeltaScanInd{1,j}/2);
+    EndScanUpInd(1,j)    = StartScanUpInd(1,j) + DeltaScanInd{1,j};
+    ScanUpInds{1,j}      = FullInd(StartScanUpInd(1,j): EndScanUpInd(1,j));
+end
+
+% Pre-Allocate Data
+% Break Signals into Up and Down Ramps
+
+for j = 1:numFiles
+    % ISig
+    ISig_Up{1,j}            = ISig_Final(ScanUpInds{1,j},j);
+    ISig_Dwn{1,j}           = flip(ISig_Final(ScanDwnInds{1,j},j));
+
+    ISig_DwnNoFlip{1,j}     = ISig_Final(ScanDwnInds{1,j},j);   
+        
+    % FlSig
+    FlSig_FinalUp{1,j}      = FlSig_Final(ScanUpInds{1,j},j);
+    FlSig_FinalUpSM{1,j}    = FlSig_FinalSM(ScanUpInds{1,j},j);
+
+    FlSig_FinalDwn{1,j}     = flip(FlSig_Final(ScanDwnInds{1,j},j));
+    FlSig_FinalDwnSM{1,j}   = flip(FlSig_FinalSM(ScanDwnInds{1,j},j));
+                
+    FlSig_DwnNoFlip{1,j}    = FlSig_Final(ScanDwnInds{1,j},j);     
+    
+       % Et sig averaged - to show the effect of averaging on the Et signals
+    EtSigAvg_Up{1,j} = EtSig(ScanUpInds{1,j},j);
+    EtSigAvg_Dwn{1,j} = EtSig(ScanDwnInds{1,j},j); 
+end
+
+% Remove the trend line in the Iodine Signal for easier computation
+
+for i = 1:numFiles
+    % Up scan
+    XIUpLine        = [ScanUpInds{1,i}]';    
+    YIUpLine        = ISig_Up{1,i}; 
+    IUpLineFit{1,i} = fit(XIUpLine, YIUpLine, 'poly1');
+    IUpLine{1,i}    = IUpLineFit{1,i}.p1.*ScanUpInds{1,i}'+ IUpLineFit{1,i}.p2;
+    
+    ISig_FinalUp{1,i} = ISig_Up{1,i} - IUpLine{1,i};
+    
+    % Down scan
+    XIDwnLine       = [ScanDwnInds{1,i}]';    
+    YIDwnLine       = ISig_Dwn{1,i}; 
+    IDwnLineFit{1,i} = fit(XIDwnLine, YIDwnLine, 'poly1');
+    IDwnLine{1,i}   = IDwnLineFit{1,i}.p1.*ScanDwnInds{1,i}'+ IDwnLineFit{1,i}.p2;
+    
+    ISig_FinalDwn{1,i} = ISig_Dwn{1,i} - IDwnLine{1,i};
+end
+
+%% Run Iodine cell processing, Iodine Cell Axis Calibration, Etalon Processing files at this step
+% Load in Iodine Spectra Data -
+
+IAtlas_WL = 1e7./wavenumber; % Wavenumbers --> Wavelengths 
+IAtlas_WL = flip(IAtlas_WL);
+absorption = 1-transmission/100; % Change transmission to absorption
+absorption = flip(absorption); % 
+
+% Define upper and lower wavelengths for the Iodine (I) atlas
+LamLowBound = 668.587;
+LamUpBound = 668.6195;
+
+% Set index range in I-atlas by the wavelength bounds
+IcellAtlasIndexRange = find(IAtlas_WL >LamLowBound & IAtlas_WL <LamUpBound); 
+
+abs_r = absorption(IcellAtlasIndexRange);
+lam_r = IAtlas_WL(IcellAtlasIndexRange);
+
+% Define min peak height and width for the FIND function
+MPH_IA = 0.3;
+MPW_IA = 1;
+
+% Find the peaks in the I-atlas range
+[pksIAtlas, locsIAtlas] = findpeaks(abs_r, 'MinPeakHeight', MPH_IA, 'MinPeakWidth', MPW_IA);
+txtIAtlas = {length(locsIAtlas)};
+
+
+%% flip the I-cell atlas so that they're descending wavelengths, for the up scan
+lam_rflip = flip(lam_r);
+abs_rflip = flip(abs_r);
+
+% Find peaks in I-atlas, up scan
+[pksIAtlasflip, locsIAtlasflip] = findpeaks(abs_rflip, 'MinPeakHeight', MPH_IA, 'MinPeakWidth', MPW_IA);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Using Iodine Absorption to calibrate X-Axis %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Set conditions for peaks in iodine - look at the previous section's graph for reference 
+
+MPD_I = 3000; %min peak distance, by index
+MPW_I = 1000; %min peak width, by index
+MPH_I = .091; %2 mm, G = 0.087
+
+% FIND peaks
+[IpksUp1, IlocsUp1] = findpeaks(-ISig_FinalUp{1,1},  'MinPeakwidth', MPW_I, 'MinPeakDistance', MPD_I, 'MinPeakHeight', MPH_I); % 
+
+% Pre-allocate variables
+
+% Find peaks for each experiment, up and down scan
+for j = 1:numFiles
+    [IpksUp(:,j), IlocsUp(:,j)] = findpeaks(-ISig_FinalUp{1,j},  'MinPeakwidth', MPW_I, 'MinPeakDistance', MPD_I, 'MinPeakHeight', MPH_I); % ScanUpInds{1,j},
+    
+    % Label peaks
+    if IlocsUp(:,j) ~=0
+        IposUp{1, j} = [IlocsUp(:,j), IpksUp(:,j)]; %each cell is composed of the x location of the peak in col. 1, and the peak height in col.2
+        ItextUp{1,j} = num2str(IlocsUp(:,j)); % Oct 11, 2022 - got rid of text, don't really need it
+    else 
+        disp('No Maxima with given constraints (Up)')
+        IposUp = [];
+    end
+
+    % Find peaks, Down scan
+    [IpksDwn(:,j), IlocsDwn(:,j)] = findpeaks(-ISig_FinalDwn{1,j},   'MinPeakwidth', MPW_I, 'MinPeakDistance', MPD_I, 'MinPeakHeight', MPH_I); % ScanUpInds{1,j},
+
+    % Label peaks
+    if IlocsDwn(:,j) ~=0
+        IposDwn{1, j} = [IlocsDwn(:,j), IpksDwn(:,j)]; %each cell is composed of the x location of the peak in col. 1, and the peak height in col.2
+        ItextDwn{1, j} = num2str(IlocsDwn(:,j), '%.4f');
+    else 
+        disp('No Maxima with given constraints (Down)')
+        IposDwn = [];
+    end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Create a wavelength axis w/ I-Cell%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% This analyzes the Laser absorption signal through the I-cell 
+% and relates them to the iodine atlas in order to locate the transition wavelength
+% In the wavelength scan.
+
+%% Fit: all peaks, single Gaussian per peak
+- Pre-Allocate Variables -
+
+% Fit each of the peaks from the LAS data to Gaussians in order to find the peaks
+for i = 1:numFiles % for each experiment
+    ScanDwnFitInd{1,i} = 1:length(ScanDwnInds{1,i});
+    ScanUpFitInd{1,i} = 1:length(ScanUpInds{1,i});
+    
+    for k = 1:3 % for each of the peaks, except the last one
+        % Up
+        IpksUpIndRange = [IlocsUp(k,i) - 5000  :  IlocsUp(k,i) + 6000]';
+        IpksUpIndRangeCell{k,i} = IpksUpIndRange; % IpksUpIndRangeMat;
+
+	% Prepare data for fit
+        [xDataUp, yDataUp] = prepareCurveData(IpksUpIndRangeCell{k,i}, -ISig_FinalUp{1,i}(IpksUpIndRangeCell{k,i},1));
+
+        % Set up fittype and options.
+        ft = fittype( 'gauss1' );
+        opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+        opts.StartPoint = [IpksUp(k,i) IlocsUp(k,i) 10000];
+
+        % Fit data to Gaussian curve
+        IpksUpFits{k,i} = fit( xDataUp, yDataUp,'gauss1', opts); %  gaussEqn , opts
+        IciUpFits{k,i} = confint(IpksUpFits{k,i}); % confidence interval
+
+        % Extracting Gaussian quantities for plotting
+        if IlocsUp ~=0
+            IposUpFinal{k,i} = [IpksUpFits{k,i}.b1, IpksUpFits{k,i}.a1]; % x location of the peak in col. 1, and the peak height in col.2
+            ItextUpFinal{k,1} = num2str(IpksUpFits{k,i}.b1);
+        else 
+            sprintf('No Maxima with given constraints')
+            IposUpFinal = [];
+            return
+        end
+        
+        % Assign the central point of each of the gaussian peaks to an array, for X-axis values
+        X_GIPksUp(k,i) = IpksUpFits{k,i}.b1; 
+        X_GIPksUpErr(k,:,i) = [IciUpFits{k,i}(1,2), IciUpFits{k,i}(2,2)]; % lo error; coordinate points of the error, compiled into a matrix
+
+        % Error, I Up; This would be used to plot the error by giving the total deviation from center values, rather than the graphical points (given above)
+        ISigUpXErr(k,1, i) = IpksUpFits{k,i}.b1 - IciUpFits{k,i}(1,2); %Horizontal error, lo
+        ISigUpXErr(k,2, i) = IciUpFits{k,i}(2,2) - IpksUpFits{k,i}.b1; %Horizontal error, hi
+
+        ISigUpYErr(k,1, i) = IpksUpFits{k,i}.a1 - IciUpFits{k,i}(1,1); %vertical error, lo
+        ISigUpYErr(k,2, i) = IciUpFits{k,i}(2,1) - IpksUpFits{k,i}.a1; %vertical error, hi
+
+        % DOWN Scan        
+        IpksDwnIndRange = [IlocsDwn(k,i) - 5000  :  IlocsDwn(k,i) + 6000]'; % for each peak, create an array of indices around them
+        IpksDwnIndRangeCell{k,i} = IpksDwnIndRange; % Store the index ranges
+
+        % Fit Data to Model    
+        [xDataDwn, yDataDwn] = prepareCurveData( IpksDwnIndRangeCell{k,i}, -ISig_FinalDwn{1,i}(IpksDwnIndRangeCell{k,i},1));
+
+        % Set up fittype and options.
+        ft = fittype( 'gauss1' );
+        opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+        opts.StartPoint = [IpksDwn(k,i) IlocsDwn(k,i) 10000];
+
+        IpksDwnFits{k,i} = fit( xDataDwn, yDataDwn,'gauss1', opts); %  gaussEqn , opts        
+        IpksDwnGLine{k,i} = IpksDwnFits{k,i}.a1.*exp(-((ScanDwnFitInd{1,i}(1,IpksDwnIndRangeCell{k,i}) - IpksDwnFits{k,i}.b1 )./IpksDwnFits{k,i}.c1).^2);
+        
+        IciDwnFits{k,i} = confint(IpksDwnFits{k,i});                                                                   
+
+        % Extracting Gaussian quantities for plotting
+        if IlocsDwn ~=0
+            IposDwnFinal{k,i} = [IpksDwnFits{k,i}.b1, IpksDwnFits{k,i}.a1]; % x location of the peak in col. 1, and the peak height in col.2
+            ItextDwnFinal{k,1} = num2str(IpksDwnFits{k,i}.b1);
+        else 
+            sprintf('No Maxima with given constraints')
+            IposDwnFinal = [];
+            return
+        end
+        
+        % Assign the central point of each of the gaussian peaks to X-axis values
+        X_GIPksDwn(k,i) = IpksDwnFits{k,i}.b1; 
+        X_GIPksDwnErr(k,:,i) = [IciDwnFits{k,i}(1,2), IciDwnFits{k,i}(2,2)]; % lo error, high error, central frequency; coordinate points of the error
+
+        % Error ISig Down; 
+        ISigDwnXErr(k,1,i) = IpksDwnFits{k,i}.b1 - IciDwnFits{k,i}(1,2); 
+        ISigDwnXErr(k,2,i) = IciDwnFits{k,i}(2,2) - IpksDwnFits{k,i}.b1; 
+
+        ISigDwnYErr(k,1,i) = IpksDwnFits{k,i}.a1 - IciDwnFits{k,i}(1,1); %vertical error, lo
+        ISigDwnYErr(k,2,i) = IciDwnFits{k,i}(2,1) - IpksDwnFits{k,i}.a1; %vertical error, hi
+    end
+    
+    for k = 4 % The last peak, it's very close to the end, so you have to narrow the range of index points. But the same procedure as above.
+        % Up
+        IpksUpIndRange = [IlocsUp(k,i) - 8000  :  length(ISig_FinalUp{1,i})]';
+        IpksUpIndRangeCell{k,i} = IpksUpIndRange; % IpksUpIndRangeMat;
+
+        % Fit data to model
+        [xDataUp, yDataUp] = prepareCurveData(IpksUpIndRangeCell{k,i}, -ISig_FinalUp{1,i}(IpksUpIndRangeCell{k,i},1));
+
+        % Set up fittype and options.
+        ft = fittype( 'gauss1' );
+        opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+        opts.StartPoint = [IpksUp(k,i) IlocsUp(k,i) 10000];
+
+        IpksUpFits{k,i} = fit( xDataUp, yDataUp,'gauss1', opts); 
+        IciUpFits{k,i} = confint(IpksUpFits{k,i}); % confidence interval
+
+        % Extracting Gaussian quantities for plotting
+        if IlocsUp ~=0
+            IposUpFinal{k,i} = [IpksUpFits{k,i}.b1, IpksUpFits{k,i}.a1]; % x location of the peak in col. 1, and the peak height in col.2
+            ItextUpFinal{k,1} = num2str(IpksUpFits{k,i}.b1);
+        else 
+            sprintf('No Maxima with given constraints')
+            IposUpFinal = [];
+            return
+        end
+
+        % Assign the central point of each of the gaussian peaks to X-axis values
+        X_GIPksUp(k,i) = IpksUpFits{k,i}.b1; 
+        X_GIPksUpErr(k,:,i) = [IciUpFits{k,i}(1,2), IciUpFits{k,i}(2,2)]; 
+    
+        % Horizontal error
+        ISigUpXErr(k,1, i) = IpksUpFits{k,i}.b1 - IciUpFits{k,i}(1,2); 
+        ISigUpXErr(k,2, i) = IciUpFits{k,i}(2,2) - IpksUpFits{k,i}.b1; 
+        
+        % Vertical error (not really used)
+        ISigUpYErr(k,1, i) = IpksUpFits{k,i}.a1 - IciUpFits{k,i}(1,1); %vertical error, lo
+        ISigUpYErr(k,2, i) = IciUpFits{k,i}(2,1) - IpksUpFits{k,i}.a1; %vertical error, hi
+
+        % Down        
+        IpksDwnIndRange = [IlocsDwn(k,i) - 8000  :  length(ISig_FinalDwn{1,i})]'; % for each peak, create an array of indices around them
+        IpksDwnIndRangeCell{k,i} = IpksDwnIndRange; % Store the index ranges
+
+        % Fit Data to Model    
+        [xDataDwn, yDataDwn] = prepareCurveData( IpksDwnIndRangeCell{k,i}, -ISig_FinalDwn{1,i}(IpksDwnIndRangeCell{k,i},1));
+
+        % Set up fittype and options.
+        ft = fittype( 'gauss1' );
+        opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+        opts.StartPoint = [IpksDwn(k,i) IlocsDwn(k,i) 10000];
+
+        IpksDwnFits{k,i} = fit( xDataDwn, yDataDwn,'gauss1', opts); %  gaussEqn , opts
+        IpksDwnGLine{k,i} = IpksDwnFits{k,i}.a1.*exp(-((ScanDwnFitInd{1,i}(1,IpksDwnIndRangeCell{k,i}) - IpksDwnFits{k,i}.b1 )./IpksDwnFits{k,i}.c1).^2);
+        IciDwnFits{k,i} = confint(IpksDwnFits{k,i});                                                                   
+
+        % Extracting Gaussian quantities for plotting
+        if IlocsDwn ~=0
+            IposDwnFinal{k,i} = [IpksDwnFits{k,i}.b1, IpksDwnFits{k,i}.a1]; % x location of the peak in col. 1, and the peak height in col.2
+            ItextDwnFinal{k,1} = num2str(IpksDwnFits{k,i}.b1);
+        else 
+            sprintf('No Maxima with given constraints')
+            IposDwnFinal = [];
+            return
+        end
+        
+        % Assign the central point of each of the gaussian peaks to X-axis values
+        X_GIPksDwn(k,i) = IpksDwnFits{k,i}.b1; 
+        X_GIPksDwnErr(k,:,i) = [IciDwnFits{k,i}(1,2), IciDwnFits{k,i}(2,2)]; 
+
+        % Error, ISig Down; This would be used to plot the error by giving the total deviation from center values, rather than the graphical points (given above) Used in the Errorbar plot
+        ISigDwnXErr(k,1,i) = IpksDwnFits{k,i}.b1 - IciDwnFits{k,i}(1,2); %Horizontal error, lo, difference value
+        ISigDwnXErr(k,2,i) = IciDwnFits{k,i}(2,2) - IpksDwnFits{k,i}.b1; %Horizontal error, hi
+
+        ISigDwnYErr(k,1,i) = IpksDwnFits{k,i}.a1 - IciDwnFits{k,i}(1,1); %vertical error, lo
+        ISigDwnYErr(k,2,i) = IciDwnFits{k,i}(2,1) - IpksDwnFits{k,i}.a1; %vertical error, hi
+    end
+end
+
+%% Fit: peaks determining the x-axis points and the I-cell atlas peaks
+% Creating a linear Fit to the wavelengths of the peaks identified on the iodine atlas to the index value of the position of the peaks.
+% This is for adjusting the x-axis w/r/t I-cell. Necessary for determining the error on the position of the I-cell peaks.
+
+% Pre-allocate Data Here
+
+for i = 1:numFiles
+    % Principle lines, Down and Up
+    XAxisDwnFit{1,i} = fit(X_GIPksDwn(:,i), pos1IAtlas(:,1),  'poly1');
+    LamXAxisDwn{1,i} = ScanDwnFitInd{1,i}.*XAxisDwnFit{1,i}.p1 + XAxisDwnFit{1,i}.p2; % LamXAxis is populated by each individual scan's number of indices, in case there's a difference between them in the scans.
+
+    XAxisUpFit{1,i} = fit(X_GIPksUp(:,i), pos1IAtlas(:,1),  'poly1');
+    LamXAxisUp{1,i} = ScanUpFitInd{1,i}.*XAxisUpFit{1,i}.p1 + XAxisUpFit{1,i}.p2;
+
+    % Error - based on linear fits directly above
+    % Down
+    ciXAxisDwnFit{1,i} = confint(XAxisDwnFit{1,i}); 
+    LamXAxisDwnErrLoLin{1,i} = ScanDwnFitInd{1,i}.*ciXAxisDwnFit{1,i}(1,1) + ciXAxisDwnFit{1,i}(1,2); % Low end of the slope & low end of y-int
+    LamXAxisDwnErrHiLin{1,i} = ScanDwnFitInd{1,i}.*ciXAxisDwnFit{1,i}(2,1) + ciXAxisDwnFit{1,i}(2,2); % high end of slope, % high end of y-int.
+
+    % Up
+    ciXAxisUpFit{1,i} = confint(XAxisUpFit{1,i}); 
+    LamXAxisUpErrLoLin{1,i} = ScanUpFitInd{1,i}.*ciXAxisUpFit{1,i}(1,1) + ciXAxisUpFit{1,i}(1,2);
+    LamXAxisUpErrHiLin{1,i} = ScanUpFitInd{1,i}.*ciXAxisUpFit{1,i}(2,1) + ciXAxisUpFit{1,i}(2,2);
+
+    % Error - based on error from Gaussian points
+    % Down
+    XAxisDwnFitErrHi{1,i} = fit([X_GIPksDwnErr(1,2, i), X_GIPksDwnErr(4,1, i)]', [pos1IAtlas(1,1), pos1IAtlas(4,1)]',  'poly1'); % Fitting the hi end error of the first point to the low end error of the last point, max slope 
+    XAxisDwnFitErrLo{1,i} = fit([X_GIPksDwnErr(1,1, i), X_GIPksDwnErr(4,2, i)]', [pos1IAtlas(1,1), pos1IAtlas(4,1)]',  'poly1'); % Fitting the low end error of the first point to the high end error of the last point, min slope 
+
+    LamXAxisDwnErrHi{1,i} = ScanDwnFitInd{1,i}.*XAxisDwnFitErrHi{1,i}.p1 + XAxisDwnFitErrHi{1,i}.p2; % Changed ScandDwnFitInd to ScanDwnInds, Mar 22, 2023
+    LamXAxisDwnErrLo{1,i} = ScanDwnFitInd{1,i}.*XAxisDwnFitErrLo{1,i}.p1 + XAxisDwnFitErrLo{1,i}.p2;
+      
+    % Up
+    XAxisUpFitErrHi{1,i} = fit([X_GIPksUpErr(1,2, i), X_GIPksUpErr(4,1, i)]', [pos1IAtlas(1,1), pos1IAtlas(4,1)]',  'poly1');
+    XAxisUpFitErrLo{1,i} = fit([X_GIPksUpErr(1,1, i), X_GIPksUpErr(4,2, i)]', [pos1IAtlas(1,1), pos1IAtlas(4,1)]',  'poly1');
+
+    LamXAxisUpErrHi{1,i} = ScanUpFitInd{1,i}.*XAxisUpFitErrHi{1,i}.p1 + XAxisUpFitErrHi{1,i}.p2;
+    LamXAxisUpErrLo{1,i} = ScanUpFitInd{1,i}.*XAxisUpFitErrLo{1,i}.p1 + XAxisUpFitErrLo{1,i}.p2;
+end
+
+%% Finding peaks @ wavelengths - single, to get initial value to pre-allocate
+% Purpose: To double check that the peaks line up, and do any shifting
+
+% Find first peaks
+% Mean peak distance and width for the FINDPEAKS function
+MPD_IUpLam = 0.004;
+MPW_IUpLam = 1000;
+
+MPD_IDwnLam = 0.004;
+MPW_IDwnLam = 1000;
+
+% Find the peaks in the iodine LAS signal
+[IpksUpLam1, IlocsUpLam1] = findpeaks(-ISig_FinalUp{1,1}, LamXAxisUp{1,1}, 'MinPeakDistance', MPD_IUpLam, 'MinPeakHeight', MPH_I); 
+[IpksDwnLam1, IlocsDwnLam1] = findpeaks(-ISig_FinalDwn{1,1}, LamXAxisDwn{1,1}, 'MinPeakDistance', MPD_IDwnLam, 'MinPeakHeight', MPH_I); 
+
+%% Identify the peaks: Map the peaks from the iodine signal onto a wavelength axis
+
+% Up
+% Pre-allocate variables here
+
+for i = 1:numFiles
+    % Up - FINDPEAKS function
+    [IpksUpLam(:,i), IlocsUpLam(:,i)] = findpeaks(-ISig_FinalUp{1,i}, LamXAxisUp{1,i}, 'MinPeakDistance', MPD_IUpLam, 'MinPeakHeight', MPH_I); % 'MinPeakwidth', MPW_IUpLam, 
+    
+    % Finding the peaks on the upper and lower error bounds of the linear fits.
+    % Hi
+    [IpksUpLamHiErr(:,i), IlocsUpLamHiErr(:,i)] = findpeaks(-ISig_FinalUp{1,i}, LamXAxisUpErrHiLin{1,i}, 'MinPeakDistance', MPD_IUpLam, 'MinPeakHeight', MPH_I); % 'MinPeakwidth', MPW_IUpLam, 
+    LamUpHiErr(:,i) = IlocsUpLamHiErr(:,i) - IlocsUpLam(:,i);
+    LamUpHiErrAvg(1,i) = mean(LamUpHiErr(:,i),1);
+    
+    % Low
+    [IpksUpLamLoErr(:,i), IlocsUpLamLoErr(:,i)] = findpeaks(-ISig_FinalUp{1,i}, LamXAxisUpErrLoLin{1,i}, 'MinPeakDistance', MPD_IUpLam, 'MinPeakHeight', MPH_I);  
+    LamUpLoErr(:,i) = IlocsUpLam(:,i) - IlocsUpLamLoErr(:,i);
+    LamUpLoErrAvg(1,i) = mean(LamUpLoErr(:,i),1);
+    
+    % Down scan, repeat the above routine
+    [IpksDwnLam(:,i), IlocsDwnLam(:,i)] = findpeaks(-ISig_FinalDwn{1,i}, LamXAxisDwn{1,i}, 'MinPeakDistance', MPD_IDwnLam, 'MinPeakHeight', MPH_I); 
+    
+    % Down Err
+    % Hi
+    [IpksDwnLamHiErr(:,i), IlocsDwnLamHiErr(:,i)] = findpeaks(-ISig_FinalDwn{1,i}, LamXAxisDwnErrHiLin{1,i}, 'MinPeakDistance', MPD_IDwnLam, 'MinPeakHeight', MPH_I);  
+    LamDwnHiErr(:,i) = IlocsDwnLamHiErr(:,i) - IlocsDwnLam(:,i);
+    LamDwnHiErrAvg(1,i) = mean(LamDwnHiErr(:,i),1);
+
+    % Low
+    [IpksDwnLamLoErr(:,i), IlocsDwnLamLoErr(:,i)] = findpeaks(-ISig_FinalDwn{1,i}, LamXAxisDwnErrLoLin{1,i}, 'MinPeakDistance', MPD_IDwnLam, 'MinPeakHeight', MPH_I);  
+    LamDwnLoErr(:,i) = IlocsDwnLam(:,i) - IlocsDwnLamLoErr(:,i);
+    LamDwnLoErrAvg(1,i) = mean(LamDwnLoErr(:,i),1);
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Etalon Data Processing %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Analyze the data from the etalon to make the frequency axis
+% Designed to analyze several single scan ups and scan downs
+
+% First, use the TTL signal to break up the etalon signal into Up and Down scans
+
+- Pre-Allocate Variables -
+% determine the scan start and end points
+
+for j = 1:numFilesEt
+    % Set start and end points of the Up Scans and Down Scans
+    TTLUpEt(1,j)          = find(diff(PztSigEt(:,j)) > 4,1);
+    TTLDwnEt(1,j)         = find(diff(PztSigEt(:,j)) < -4,1);
+    
+    DeltaScanIndEt{1,j}   = TTLDwnEt(1,j) - TTLUpEt(1,j);
+    
+    EndScanDwnIndEt(1,j)  = TTLUpEt(1,j) + round(DeltaScanIndEt{1,j}/2);
+    StartScanDwnIndEt(1,j)= EndScanDwnIndEt(1,j) - DeltaScanIndEt{1,j};
+    ScanDwnIndsEt{1,j}    = FullInd(StartScanDwnIndEt(1,j):EndScanDwnIndEt(1,j)); 
+    
+    StartScanUpIndEt(1,j)  = TTLUpEt(1,j) + round(DeltaScanIndEt{1,j}/2);
+    EndScanUpIndEt(1,j)    = StartScanUpIndEt(1,j) + DeltaScanIndEt{1,j};
+    ScanUpIndsEt{1,j}      = FullInd(StartScanUpIndEt(1,j): EndScanUpIndEt(1,j));
+end
+
+% Break Signals Into Up and Down Ramps
+
+for j = 1:numFilesEt
+    Et_FinalUp{1,j}  = Et_Final(ScanUpIndsEt{1,j},j);
+    Et_DwnNoFlip{1,j}  = Et_Final(ScanDwnIndsEt{1,j},j);
+    Et_FinalDwn{1,j} = flip(Et_Final(ScanDwnIndsEt{1,j},j));
+end
+
+%% Find peaks across the scan up and down - single scan, to choose settings for findpeaks & to pre-allocate data
+% Single scan - use to pre-allocate variables
+
+MPH_E = 0.10;   % min peak height
+MPD_E = 500;   % min peak distance, down
+
+[EtpksDwn1, EtlocsDwn1] = findpeaks(Et_FinalDwn{1,1}, 'MinPeakDistance', MPD_E, 'MinPeakHeight', MPH_E); %
+[EtpksUp1, EtlocsUp1] = findpeaks(Et_FinalUp{1,1}, 'MinPeakDistance', MPD_E, 'MinPeakHeight', MPH_E); %, 'MinPeakHeight', MPH
+
+NEtPksUp1 = length(EtpksUp1);
+NEtPksDwn1 = length(EtpksDwn1);
+
+%% Get peaks for all scans
+
+for i = 1:numFilesEt
+    [EtpksDwn(:,i), EtlocsDwn(:,i)] = findpeaks(Et_FinalDwn{1,i}, 'MinPeakDistance', MPD_E, 'MinPeakHeight', MPH_E); %, 'MinPeakHeight', MPH
+    [EtpksUp(:,i), EtlocsUp(:,i)] = findpeaks(Et_FinalUp{1,i}, 'MinPeakDistance', MPD_E, 'MinPeakHeight', MPH_E); %, 'MinPeakHeight', MPH
+end
+
+%% Etalon Processing: Pairing each point to an FSR value
+% The FSR of the mirrors is a fixed quantity, calculated as such (see http://www.repairfaq.org/sam/manuals/sfpiins1.htm)
+
+L_mirr = .03876 +2*0.0017; % Distance between mirrors, faceplate distance + recessed distance
+FSR = c/(4*L_mirr); %FSR of the etalon, 
+
+FSRUpVal = zeros(length(EtlocsUp(:,1)), numFilesEt);
+FSRDwnVal = zeros(length(EtlocsDwn(:,1)), numFilesEt);
+
+% Up scan
+for i = 1:numFilesEt
+    for h = 1:length(EtlocsUp(:,1))
+        FSRUpVal(h,i) = (h-1)*FSR; 
+    end
+end
+
+% Down scan
+for i = 1:numFilesEt
+    for h = 1:length(EtlocsDwn(:,1))
+        FSRDwnVal(h,i) = (h-1)*FSR; 
+    end
+end
+
+%% Fit: Take all etalon peaks from all etalon data fit to a quadratic
+
+% % DOWN scan
+[FSRDwnXData1, FSRDwnYData1] = prepareCurveData(EtlocsDwn, FSRDwnVal);
+FSRFitDwn1 = fit(FSRDwnXData1, FSRDwnYData1, 'poly2');
+FSRFitDwn_prez1 = fit(FSRDwnXData1.*1e-4, FSRDwnYData1.*1e-9, 'poly2');
+
+% Create an axis by using the indices to populate an array with the quadratic fit
+NuXAxisDwn1(:,1)  = FSRFitDwn1.p1.*ScanDwnFitInd{1,1}.^2 + FSRFitDwn1.p2.*ScanDwnFitInd{1,1} + FSRFitDwn1.p3;
+
+% Error on the frequency axis
+% Take the confidence interval of the fit made above to determine the upper and lower bound frequency error axes
+NuciDwn1   = confint(FSRFitDwn1); 
+
+% Error Frequency Axis values
+NuXAxisDwnErrLo1(:,1) = NuciDwn1(1,1).*ScanDwnFitInd{1,1}.^2 + NuciDwn1(1,2).*ScanDwnFitInd{1,1} + NuciDwn1(1,3); 
+NuXAxisDwnErrHi1(:,1) = NuciDwn1(2,1).*ScanDwnFitInd{1,1}.^2 + NuciDwn1(2,2).*ScanDwnFitInd{1,1} + NuciDwn1(2,3);
+
+% The absolute error values, to plot the errorbars
+NuDwnErrValLo1(:,1) = NuXAxisDwn1 - NuXAxisDwnErrLo1; 
+NuDwnErrValHi1(:,1) = NuXAxisDwnErrHi1 - NuXAxisDwn1;
+
+% % UP scan - same procedure as above
+[FSRUpXData1, FSRUpYData1] = prepareCurveData(EtlocsUp, FSRUpVal);
+FSRFitUp1              = fit(FSRUpXData1, FSRUpYData1, 'poly2');
+FSRFitUp_prez1         = fit(FSRUpXData1.*1e-4, FSRUpYData1.*1e-9, 'poly2');
+
+NuXAxisUp1(:,1)            = FSRFitUp1.p1.*ScanUpFitInd{1,1}.^2 + FSRFitUp1.p2.*ScanUpFitInd{1,1} + FSRFitUp1.p3;
+
+% Individual Scan Error - UP
+NuciUp1         = confint(FSRFitUp1);
+% Axis values
+NuXAxisUpErrLo1(:,1) = NuciUp1(1,1).*ScanUpFitInd{1,1}.^2 + NuciUp1(1,2).*ScanUpFitInd{1,1} + NuciUp1(1,3); 
+NuXAxisUpErrHi1(:,1) = NuciUp1(2,1).*ScanUpFitInd{1,1}.^2 + NuciUp1(2,2).*ScanUpFitInd{1,1} + NuciUp1(2,3);
+
+% The absolute error values, to plot the errorbars
+NuUpErrValLo1(:,1) = NuXAxisUp1 - NuXAxisUpErrLo1; 
+NuUpErrValHi1(:,1) = NuXAxisUpErrHi1 - NuXAxisUp1;
+
+
+%% Theoretical FSR vs experimental
+EtlocsDwnDiff1 = EtlocsDwn(2,1) - EtlocsDwn(1,1);
+EtlocsUpDiff1 = EtlocsUp(2,1) - EtlocsUp(1,1);
+
+EtlocsDwnTh = zeros(length(EtlocsDwn(:,1)), 1);
+EtlocsUpTh = zeros(length(EtlocsUp(:,1)), 1);
+
+for i = 1:length(EtlocsDwn(:,1))
+    EtlocsDwnTh(i,1) = EtlocsDwn(1,1) + EtlocsDwnDiff1.*(i-1);
+end
+
+for i = 1:length(EtlocsUp(:,1))
+    EtlocsUpTh(i,1) = EtlocsUp(1,1) + EtlocsUpDiff1.*(i-1);
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Relative Frequency Axis calculation %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Use the frequency axes and wavelength axes calculated above to obtain a relative frequency axis
+
+% Pre-Allocate variables
+
+% For each of the experiments, define the central transition wavelength/frequency.
+for i = 1:numFiles
+    % Central freq & error --> Vz & Vz Err
+        
+    % Error on the central transition line
+    Lam0_ArII68DwnHiErr(1,i) = L0+ LamDwnHiErrAvg(1,i);
+    Lam0_ArII68DwnLoErr(1,i) = L0- LamDwnLoErrAvg(1,i);
+
+    Lam0_ArII68UpHiErr(1,i) = L0+ LamUpHiErrAvg(1,i);
+    Lam0_ArII68UpLoErr(1,i) = L0- LamUpLoErrAvg(1,i);
+
+    % Locating the central atomic transition from the wavelength axis on the frequency axis
+    % Down
+    % Main central transition freq
+    Nu0Dwn_ArIIRel(1,i)       = NuXAxisDwn1(NearVal(Lam0_ArII68, LamXAxisDwn{1,i}),1); % The central frequency (wavelength) of Ar-II transition, in the relative frequency scale
+    
+    % Error calculation on the central transition frequency
+    % 0th order error - high and low values of the central transition on the main frequency axis
+    Nu0Dwn_ArIIRelErrLo0(1,i)  = NuXAxisDwn1(NearVal(Lam0_ArII68DwnLoErr(1,i), LamXAxisDwn{1,i}),1); % Lo side of central frequency
+    Nu0Dwn_ArIIRelErrHi0(1,i)  = NuXAxisDwn1(NearVal(Lam0_ArII68DwnHiErr(1,i), LamXAxisDwn{1,i}),1); % Hi side of central frequency
+    
+    % 1st order error - the main central transition on the high and low frequency axes
+    Nu0Dwn_ArIIRelErrLo1(1,i)  = NuXAxisDwnErrLo1(NearVal(Lam0_ArII68, LamXAxisDwn{1,i}),1); % Lo side of central frequency
+    Nu0Dwn_ArIIRelErrHi1(1,i)  = NuXAxisDwnErrHi1(NearVal(Lam0_ArII68, LamXAxisDwn{1,i}),1); % Hi side of central frequency
+    
+    % 2nd order error - the high and low central transition values on the high and low frequency axes
+    Nu0Dwn_ArIIRelErrLo2(1,i)  = NuXAxisDwnErrLo1(NearVal(Lam0_ArII68DwnLoErr(1,i), LamXAxisDwn{1,i}),1); % Lo side of central frequency
+    Nu0Dwn_ArIIRelErrHi2(1,i)  = NuXAxisDwnErrHi1(NearVal(Lam0_ArII68DwnHiErr(1,i), LamXAxisDwn{1,i}),1); % Hi side of central frequency
+    
+    % Up Scan
+    % Main central transition freq
+    Nu0Up_ArIIRel(1,i)        = NuXAxisUp1(NearVal(Lam0_ArII68, LamXAxisUp{1,i}), 1); % The central frequency of Ar-II transition, in the relative frequency scale
+    
+    % Error
+    % 0th Order
+    Nu0Up_ArIIRelErrLo0(1,i)  = NuXAxisUp1(NearVal(Lam0_ArII68UpLoErr(1,i), LamXAxisUp{1,i}),1); 
+    Nu0Up_ArIIRelErrHi0(1,i)  = NuXAxisUp1(NearVal(Lam0_ArII68UpHiErr(1,i), LamXAxisUp{1,i}),1); 
+    
+    % 1st Order
+    Nu0Up_ArIIRelErrLo1(1,i)   = NuXAxisUpErrLo1(NearVal(Lam0_ArII68, LamXAxisUp{1,i}), 1); 
+    Nu0Up_ArIIRelErrHi1(1,i)   = NuXAxisUpErrHi1(NearVal(Lam0_ArII68, LamXAxisUp{1,i}), 1); 
+
+    % 2nd order error - the high and low central transition values on the high and low frequency axes
+    Nu0Up_ArIIRelErrLo2(1,i)  = NuXAxisUpErrLo1(NearVal(Lam0_ArII68UpLoErr(1,i), LamXAxisUp{1,i}),1); % Lo side of central frequency
+    Nu0Up_ArIIRelErrHi2(1,i)  = NuXAxisUpErrHi1(NearVal(Lam0_ArII68UpHiErr(1,i), LamXAxisUp{1,i}),1); % Hi side of central frequency
+    
+    % Create Relative Frequency axis with 0 at the transition frequency
+    % Down
+    % Main, central relative frequency axis                         
+    NuXAxisDwn_Rel(:,i)      = NuXAxisDwn1(:,1) - Nu0Dwn_ArIIRel(1,i); % shift the freq axis down relative to the central freq.
+    Nu0Dwn_ArIIRel0(1,i)      = Nu0Dwn_ArIIRel(1,i) - Nu0Dwn_ArIIRel(1,i); % establish 0
+
+    % ERROR in the central transition freq., DOWN: the difference between the transition freq. found from the central freq axis and the transition freq. found from the lo and hi freq axes
+    
+    % DOWN Scan
+    % 1st Method - subtract hi/lo transition frequency from main freq axis
+    NuXAxisDwn_RelHiErr0(:,i) =  NuXAxisDwn1(:,1) - Nu0Dwn_ArIIRelErrLo0(1,i);
+    NuXAxisDwn_RelLoErr0(:,i) =  NuXAxisDwn1(:,1) - Nu0Dwn_ArIIRelErrHi0(1,i);
+    
+    % 2nd Method - subtract main central frequency from hi/lo freq axis
+    % The hi/lo doesn't swap here bc the you're taking the axis itself and moving it w/r/t a point.
+    NuXAxisDwn_RelLoErr1(:,i) =  NuXAxisDwnErrLo1(:,1) - Nu0Dwn_ArIIRel(1,i);
+    NuXAxisDwn_RelHiErr1(:,i) =  NuXAxisDwnErrHi1(:,1) - Nu0Dwn_ArIIRel(1,i);
+    
+    % 3rd Method - subtract high/low transition freq from hi/low freq axes
+    % The LO/HI (in all caps) designates the ultimate position of high and low
+    NuXAxisDwn_RelLoLoHIErr2(:,i) =  NuXAxisDwnErrLo1(:,1) - Nu0Dwn_ArIIRelErrLo0(1,i);
+    NuXAxisDwn_RelHiHiLOErr2(:,i) =  NuXAxisDwnErrHi1(:,1) - Nu0Dwn_ArIIRelErrHi0(1,i);
+    
+    % 4th Method - subtract high/low transition freq. from low/high freq axes
+    NuXAxisDwn_RelLoHiErr3(:,i) =  NuXAxisDwnErrLo1(:,1) - Nu0Dwn_ArIIRelErrHi0(1,i);
+    NuXAxisDwn_RelHiLoErr3(:,i) =  NuXAxisDwnErrHi1(:,1) - Nu0Dwn_ArIIRelErrLo0(1,i);
+        
+    % UP Scan
+    NuXAxisUp_Rel(:,i)       = NuXAxisUp1(:,1) - Nu0Up_ArIIRel(1,i);
+    Nu0Up_ArIIRel0(1,i)      = Nu0Up_ArIIRel(1,i)  - Nu0Up_ArIIRel(1,i);
+    
+    % 1st method - subtract hi/lo central frequency from main freq axis
+    % These are swapped from what they intuitively should be bc by subtracting the original axis by the lower bound, it then shifts the signal up
+    NuXAxisUp_RelHiErr0(:,i) =  NuXAxisUp1(:,1) - Nu0Up_ArIIRelErrLo0(1,i);
+    NuXAxisUp_RelLoErr0(:,i) =  NuXAxisUp1(:,1) - Nu0Up_ArIIRelErrHi0(1,i);
+    
+    % 2nd method - subtract main central frequency from hi/lo freq axis
+    % The hi/lo doesn't swap here bc the you're taking the axis itself and moving it w/r/t a point.
+    NuXAxisUp_RelLoErr1(:,i) =  NuXAxisUpErrLo1(:,1) - Nu0Up_ArIIRel(1,i);
+    NuXAxisUp_RelHiErr1(:,i) =  NuXAxisUpErrHi1(:,1) - Nu0Up_ArIIRel(1,i);
+    
+    % 3rd method - subtract high/low central freq from hi/low freq axes
+    % The LO/HI (in all caps) designates the ultimate position of high and low error bounds
+    NuXAxisUp_RelLoLoHIErr2(:,i) =  NuXAxisUpErrLo1(:,1) - Nu0Up_ArIIRelErrLo0(1,i);
+    NuXAxisUp_RelHiHiLOErr2(:,i) =  NuXAxisUpErrHi1(:,1) - Nu0Up_ArIIRelErrHi0(1,i);
+    
+    % 4th method - subtract high/low transition freq. from low/high freq axes``
+    NuXAxisUp_RelLoHiErr3(:,i) =  NuXAxisUpErrLo1(:,1) - Nu0Up_ArIIRelErrHi0(1,i);
+    NuXAxisUp_RelHiLoErr3(:,i) =  NuXAxisUpErrHi1(:,1) - Nu0Up_ArIIRelErrLo0(1,i);
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Fluorescence Processing %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Identifying peaks in Fluorescence absorption. This is just to pre-allocate & get starting points for the Fl. Analysis
+
+% Pre-Allocate Variables %
+
+% Minimum peak distance and width of the fluorescence signal for the FINDPEAKS function
+MPD_Fl = 1e5;
+MPW_Fl = 1e3;
+
+% Find peaks in 5x smoothed data. Use as center start point in Gaussian Fits
+
+% Set the min peak height. Depending on the experiment, this will be important as noise may rival the fluorescence peak height.
+MPH_FlPP  = [1.0, 1.0, 0.95, .91, 0.95, 0.9, .90, .90, 1.0, 1.0, 1.0, 0.9, 1.1, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+
+for i = 1:numFiles
+    % DOWN = increasing wavelengths
+    [FlpksDwn(:,i), FllocsDwn(:,i)] = findpeaks(FlSig_FinalDwnSM{1,i}, 'MinPeakHeight', MPH_FlPP(1,i), 'MinPeakwidth', MPW_Fl, 'MinPeakDistance', MPD_Fl); 
+
+    % UP scan = decreasing wavelengths
+    [FlpksUp(:,i), FllocsUp(:,i)] = findpeaks(FlSig_FinalUpSM{1,i}, 'MinPeakHeight', MPH_FlPP(1,i), 'MinPeakwidth', MPW_Fl, 'MinPeakDistance', MPD_Fl);  
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Fluorescence Processing & Calculations - Ti & Vz %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Pre-allocate Variables
+
+%% Define the starting point for the Gaussian Width, this improves the Gaussian Fit 
+%	         %  1      2    3     4   5    6     7   8    9   10    11   12  13   14    15   16   17   18  19   20
+GWidthDwnPP     = [1.0, 0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; 
+GWidthUpPP      = [1.0, 0.88, 0.9, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; 
+
+for i = 1: numFiles % For each of the experiments
+    
+    % DOWN SCAN
+    % Use these to plot,
+    FlpksDwnIndRange = [FllocsDwn(1,i) - 20000  :  FllocsDwn(1,i) + 20000]';
+    FlpksDwnIndRangeCell{1,i} = FlpksDwnIndRange;
+    
+    % Central frequency axis values
+    [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_Rel(:, i).*1e-9, FlSig_FinalDwn{1,i});
+    Y0Dwn(1,i) = mean(FlSig_FinalDwn{1,i}(1:100000,1));
+
+    % Set up fittype and options. Note: scale down the relative frequency axis values to help Matlab fit the data better
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_Rel(FllocsDwn(1,i),i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width
+    
+    % Fit the fluorescence data on the relative frequency axis to a Gaussian
+    FlpksDwnFits{1,i} = fit( xFlDataDwn, yFlDataDwn, ft, opts); %  gaussEqn , opts 'gauss1',
+    FlDwnFitc1(1,i) = FlpksDwnFits{1,i}.c1.*1e9;
+    FlDwnFitb1(1,i) = FlpksDwnFits{1,i}.b1.*1e9;
+    
+    % Define the Gaussian fit line on the relative frequency axis
+    FlDwnCenterGLine{1,i} = FlpksDwnFits{1,i}.Y0 + FlpksDwnFits{1,i}.a1*exp(-((NuXAxisDwn_Rel(:,i)-FlDwnFitb1(1,i))./FlDwnFitc1(1,i)).^2);
+    
+    % Extract the quantities of interest
+    % Ti
+    FlFWHMDwn(1,i) = 2*sqrt(log(2))*FlDwnFitc1(1,i); % converting the c1 coefficient of the gaussian fit to FWHM
+    TiDwn(1,i) = FlDwnFitc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2); % ion temperature
+    
+    % Vz
+    NuShiftDwn(1,i) =  FlDwnFitb1(1,i); % central frequency found from the Fl. signal fit to a Gaussian
+    VzDwn(1,i) = c.*NuShiftDwn(1,i)./Nu0_ArIIAbs;
+    
+    % ERROR ANALYSIS- Uses the same techniques as the original LIF signal processing, just on the various relative frequency error axes. 
+    % 0th Degree: Direct error From Gaussian Fits of Fl Sig on Main Rel. Freq. axis
+        FlciDwnFits{1,i} = confint(FlpksDwnFits{1,i});
+    
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        FlDwnFitc1Err(1,i) = FlciDwnFits{1,i}(1,4).*1e9;% Low
+        FlDwnFitc1Err(2,i) = FlciDwnFits{1,i}(2,4).*1e9;% Upp
+
+        FlDwnFitb1Err(1,i) = FlciDwnFits{1,i}(1,3).*1e9; % Low
+        FlDwnFitb1Err(2,i) = FlciDwnFits{1,i}(2,3).*1e9; % Upp
+        
+        % Lo-side error from the lower relative frequency error axis- the center line, the Ti & the FWHM
+        FlDwnCenterGLineErrLo{1,i} = FlciDwnFits{1,i}(1,1) + FlciDwnFits{1,i}(1,2)*exp(-((NuXAxisDwn_Rel(:,i)-FlDwnFitb1Err(1,i))./FlDwnFitc1Err(1,i)).^2);
+        FlFWHMDwnErrLo(1,i) = 2*sqrt(log(2))*(FlDwnFitc1(1,i) - FlDwnFitc1Err(1,i)); % Abs. value of Doppler Broadening error
+
+	% Take the difference in the C1 variables to find the error
+        TiDwnErrLo(1,i)     = FlDwnFitc1(1,i).*abs(FlDwnFitc1(1,i) - FlDwnFitc1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+        delTiDwnErrLo(1,i)  = abs(  TiDwnErrLo(1,i)); %TiDwn(1,i) -
+        
+        % Hi-side error from the upper relative frequency error axis- the center line, the Ti & the FWHM
+        FlDwnCenterGLineErrHi{1,i} = FlciDwnFits{1,i}(2,1) + FlciDwnFits{1,i}(2,2)*exp(-((NuXAxisDwn_Rel(:,i)-FlDwnFitb1Err(2,i))./FlDwnFitc1Err(2,i)).^2);        
+        
+        FlFWHMDwnErrHi(1,i) = 2*sqrt(log(2))*(FlDwnFitc1Err(2,i) - FlDwnFitc1(1,i)); % Abs. value of Doppler Broadening error
+        
+        TiDwnErrHi(1,i)     = FlDwnFitc1(1,i).*abs(FlDwnFitc1(1,i) - FlDwnFitc1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+        delTiDwnErrHi(1,i)  = abs(TiDwnErrHi(1,i) );% -  TiDwn(1,i)
+        
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        % The difference between the hi/lo values of the frequency of the peak from the Gaussian fit and the 0 value of the transition freq. 
+        
+        % Lo-side error from the lower relative frequency error axis- the center line, 
+        DelNuShiftDwnLo(1,i)    =  FlDwnFitb1Err(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrLo(1,i)         = c.*abs(FlDwnFitb1(1,i) - FlDwnFitb1Err(1,i))./Nu0_ArIIAbs; % 
+        delVzDwnErrLo(1,i)      = abs( VzDwnErrLo(1,i)); % Absolute value of the velocity shift   
+        
+        % Hi-side error from the upper relative frequency error axis- the center line, the Ti & the FWHM
+        DelNuShiftDwnHi(1,i)   =  FlDwnFitb1Err(2,i); % FlciDwnFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzDwnErrHi(1,i)        = c.*abs(FlDwnFitb1(1,i) - DelNuShiftDwnHi(1,i))./Nu0_ArIIAbs; 
+        delVzDwnErrHi(1,i)     = abs( VzDwnErrHi(1,i)); %VzDwn(1,i) -
+    
+    % 1st Degree of Error, 0th Method of Error Calculation: plot the Fl signal on the lo/hi error freq axis, fit to Gaussian, extract values.
+        % FIT: Lo-side freq. axis fit, quantity extraction, and error extraction
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelLoErr0(:,i).*1e-9, FlSig_FinalDwn{1,i});
+        
+        % Include start points
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelLoErr0(FllocsDwn(1,i),i).*1e-9 GWidthDwnPP(1,i)]; 
+        FlpksDwnFitsLo0{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell       
+    
+        FlDwnFitLo0c1(1,i) = FlpksDwnFitsLo0{1,i}.c1.*1e9;
+        FlDwnFitLo0b1(1,i) = FlpksDwnFitsLo0{1,i}.b1.*1e9;
+       
+        % Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+        FlDwnCenterGLineLoErr0{1,i} = FlpksDwnFitsLo0{1,i}.Y0 + FlpksDwnFitsLo0{1,i}.a1*exp(-((NuXAxisDwn_RelLoErr0(:,i)-FlDwnFitLo0b1(1,i))./FlDwnFitLo0c1(1,i)).^2);
+
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrLo0(1,i) = FlDwnFitLo0c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrLo0(1,i) = abs( TiDwn(1,i) - TiDwnErrLo0(1,i));
+        
+            % 2nd Degree Error: Ti Error on Lo-side freq. axis fit
+            FlciDwnFitsLo0{1,i} = confint(FlpksDwnFitsLo0{1,i});
+            
+            FlDwnFitLo0c1Err(1,i) = FlciDwnFitsLo0{1,i}(1,4).*1e9;
+            FlDwnFitLo0c1Err(2,i) = FlciDwnFitsLo0{1,i}(2,4).*1e9;
+
+            FlDwnFitLo0b1Err(1,i) = FlciDwnFitsLo0{1,i}(1,3).*1e9;
+            FlDwnFitLo0b1Err(2,i) = FlciDwnFitsLo0{1,i}(2,3).*1e9;
+            
+            % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+            TiDwnErrLoLo0(1,i)  = FlDwnFitLo0c1(1,i).*abs(FlDwnFitLo0c1(1,i) - FlDwnFitLo0c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrLoLo0(1,i) = abs( TiDwnErrLoLo0(1,i)); % Changed this, removed TiDwn(1,i) -
+
+            TiDwnErrLoHi0(1,i) = FlDwnFitLo0c1(1,i).*abs(FlDwnFitLo0c1(1,i) - FlDwnFitLo0c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrLoHi0(1,i) = abs(TiDwnErrLoHi0(1,i)); % Changed this - TiDwn(1,i)
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        % Use this for the error on the Vz
+        DelNuShiftDwnErrLo0(1,i)     =  FlDwnFitLo0b1(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrLo0(1,i)    = c.*DelNuShiftDwnErrLo0(1,i)./Nu0_ArIIAbs; % Changed; Coordinate value of the velocity from the shift
+        delVzDwnErrLo0(1,i) = abs(VzDwn(1,i) - VzDwnErrLo0(1,i)); % Absolute value of the difference in velocity 
+            
+            % Vz Error on Lo-side freq axis fit
+            VzDwnErrLoLo0(1,i) = c.*abs(FlDwnFitLo0b1(1,i) - FlDwnFitLo0b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoLo0(1,i) = abs(VzDwnErrLoLo0(1,i));
+            % Hi
+            VzDwnErrLoHi0(1,i) = c.*abs(FlDwnFitLo0b1(1,i) - FlDwnFitLo0b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoHi0(1,i) = abs(VzDwnErrLoHi0(1,i) );
+        
+        % FIT: Hi-side Frequency Axis fit, extraction, error
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelHiErr0(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelHiErr0(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width
+        FlpksDwnFitsHi0{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell
+        
+       FlDwnFitHi0c1(1,i) = FlpksDwnFitsHi0{1,i}.c1.*1e9;
+       FlDwnFitHi0b1(1,i) = FlpksDwnFitsHi0{1,i}.b1.*1e9;
+
+	% Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+       FlDwnCenterGLineHiErr0{1,i} = FlpksDwnFitsHi0{1,i}.Y0 + FlpksDwnFitsHi0{1,i}.a1*exp(-((NuXAxisDwn_RelHiErr0(:,i)-FlDwnFitHi0b1(1,i))./FlDwnFitHi0c1(1,i)).^2);
+        
+        % Ti- same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrHi0(1,i) = FlDwnFitHi0c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrHi0(1,i) = abs( TiDwnErrHi0(1,i) - TiDwn(1,i) );
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciDwnFitsHi0{1,i} = confint(FlpksDwnFitsHi0{1,i});
+            
+            FlDwnFitHi0c1Err(1,i) = FlciDwnFitsHi0{1,i}(1,4).*1e9;
+            FlDwnFitHi0c1Err(2,i) = FlciDwnFitsHi0{1,i}(2,4).*1e9;
+
+            FlDwnFitHi0b1Err(1,i) = FlciDwnFitsHi0{1,i}(1,3).*1e9;
+            FlDwnFitHi0b1Err(2,i) = FlciDwnFitsHi0{1,i}(2,3).*1e9;
+            
+            % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+            TiDwnErrHiLo0(1,i) = FlDwnFitHi0c1(1,i).*abs(FlDwnFitHi0c1(1,i) - FlDwnFitHi0c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrHiLo0(1,i) = abs( TiDwnErrHiLo0(1,i)); % Changed this
+            
+            TiDwnErrHiHi0(1,i) = FlDwnFitHi0c1(1,i).*abs( FlDwnFitHi0c1(1,i) - FlDwnFitHi0c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrHiHi0(1,i) = abs(TiDwnErrHiHi0(1,i) ); % Changed this
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrHi0(1,i)    =  FlDwnFitHi0b1(1,i); % FlciDwnFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzDwnErrHi0(1,i)        = c.*DelNuShiftDwnErrHi0(1,i)./Nu0_ArIIAbs; 
+        delVzDwnErrHi0(1,i)     = abs(VzDwn(1,i) - VzDwnErrHi0(1,i));
+        
+            % Vz Error on Hi-side freq axis fit
+            VzDwnErrHiLo0(1,i) = c.*abs(FlDwnFitHi0b1(1,i) - FlDwnFitHi0b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiLo0(1,i) = abs(VzDwnErrHiLo0(1,i));            
+            
+            VzDwnErrHiHi0(1,i) = c.*abs(FlDwnFitHi0b1(1,i) - FlDwnFitHi0b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiHi0(1,i) = abs(VzDwnErrHiHi0(1,i) );           
+            
+    % 1st Degree of Error: 1st Method - plot the fl sig on the nu axis shifted w/r/t main central transition freq.
+        % FIT: Lo-side freq. axis fit, quantity extraction, and error extraction
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelLoErr1(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelLoErr1(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width               
+        FlpksDwnFitsLo1{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell       
+        
+        FlDwnFitLo1c1(1,i) = FlpksDwnFitsLo1{1,i}.c1.*1e9;
+        FlDwnFitLo1b1(1,i) = FlpksDwnFitsLo1{1,i}.b1.*1e9;
+
+	% Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+        FlDwnCenterGLineLoErr1{1,i} = FlpksDwnFitsLo1{1,i}.Y0 + FlpksDwnFitsLo1{1,i}.a1*exp(-((NuXAxisDwn_RelLoErr1(:,i)-FlDwnFitLo1b1(1,i))./FlDwnFitLo1c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrLo1(1,i) = FlDwnFitLo1c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrLo1(1,i) = abs( TiDwn(1,i) - TiDwnErrLo1(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciDwnFitsLo1{1,i} = confint(FlpksDwnFitsLo1{1,i});% Vz
+
+            FlDwnFitLo1c1Err(1,i) = FlciDwnFitsLo1{1,i}(1,4).*1e9;
+            FlDwnFitLo1c1Err(2,i) = FlciDwnFitsLo1{1,i}(2,4).*1e9;
+
+            FlDwnFitLo1b1Err(1,i) = FlciDwnFitsLo1{1,i}(1,3).*1e9;
+            FlDwnFitLo1b1Err(2,i) = FlciDwnFitsLo1{1,i}(2,3).*1e9;
+            
+            % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+            TiDwnErrLoLo1(1,i) = FlDwnFitLo1c1(1,i).*abs(FlDwnFitLo1c1(1,i) - FlDwnFitLo1c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrLoLo1(1,i) = abs(TiDwnErrLoLo1(1,i)); % changed this 
+
+            TiDwnErrLoHi1(1,i) = FlDwnFitLo1c1(1,i).*abs(FlDwnFitLo1c1(1,i) - FlDwnFitLo1c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrLoHi1(1,i) = abs(TiDwnErrLoHi1(1,i)); % Changed this
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrLo1(1,i)     =  FlDwnFitLo1b1(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrLo1(1,i)    = c.*DelNuShiftDwnErrLo1(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzDwnErrLo1(1,i) = abs(VzDwn(1,i) - VzDwnErrLo1(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzDwnErrLoLo1(1,i) = c.*abs(FlDwnFitLo1b1(1,i) - FlDwnFitLo1b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoLo1(1,i) = abs( VzDwnErrLoLo1(1,i));
+            
+            VzDwnErrLoHi1(1,i) = c.*abs(FlDwnFitLo1b1(1,i) - FlDwnFitLo1b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoHi1(1,i) = abs(VzDwnErrLoHi1(1,i) );
+        
+        % Hi-side Frequency Axis fit, extraction, error
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelHiErr1(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelHiErr1(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width   
+        FlpksDwnFitsHi1{1,i} = fit(xFlDataDwn, yFlDataDwn,ft, opts); % Fits stored in each row of the cell
+        
+       FlDwnFitHi1c1(1,i) = FlpksDwnFitsHi1{1,i}.c1.*1e9;
+       FlDwnFitHi1b1(1,i) = FlpksDwnFitsHi1{1,i}.b1.*1e9;
+       
+       FlDwnCenterGLineHiErr1{1,i} = FlpksDwnFitsHi1{1,i}.Y0 + FlpksDwnFitsHi1{1,i}.a1*exp(-((NuXAxisDwn_RelHiErr1(:,i)-FlDwnFitHi1b1(1,i))./FlDwnFitHi1c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrHi1(1,i) = FlDwnFitHi1c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrHi1(1,i) = abs(TiDwnErrHi1(1,i) - TiDwn(1,i));
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciDwnFitsHi1{1,i} = confint(FlpksDwnFitsHi1{1,i});
+            
+            FlDwnFitHi1c1Err(1,i) = FlciDwnFitsHi1{1,i}(1,4).*1e9;
+            FlDwnFitHi1c1Err(2,i) = FlciDwnFitsHi1{1,i}(2,4).*1e9;
+
+            FlDwnFitHi1b1Err(1,i) = FlciDwnFitsHi1{1,i}(1,3).*1e9;
+            FlDwnFitHi1b1Err(2,i) = FlciDwnFitsHi1{1,i}(2,3).*1e9;
+            
+            % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+            TiDwnErrHiLo1(1,i) = FlDwnFitHi1c1(1,i).*abs(FlDwnFitHi1c1(1,i) - FlDwnFitHi1c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrHiLo1(1,i) = abs( TiDwnErrHiLo1(1,i)); % Changed this
+
+            TiDwnErrHiHi1(1,i) = FlDwnFitHi1c1(1,i).*abs(FlDwnFitHi1c1(1,i) - FlDwnFitHi1c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2);
+            delTiDwnErrHiHi1(1,i) = abs(TiDwnErrHiHi1(1,i) ); 
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrHi1(1,i)    =  FlDwnFitHi1b1(1,i); % FlciDwnFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzDwnErrHi1(1,i)        = c.*DelNuShiftDwnErrHi1(1,i)./Nu0_ArIIAbs; 
+        delVzDwnErrHi1(1,i)     = abs(VzDwn(1,i) - VzDwnErrHi1(1,i));        
+        
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzDwnErrHiLo1(1,i) = c.*abs(FlDwnFitHi1b1(1,i) - FlDwnFitHi1b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiLo1(1,i) = abs( VzDwnErrHiLo1(1,i));            
+            
+            VzDwnErrHiHi1(1,i) = c.*abs(FlDwnFitHi1b1(1,i) - FlDwnFitHi1b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiHi1(1,i) = abs(VzDwnErrHiHi1(1,i)); 
+            
+    % 1st Degree of Error - Method 2: Plot the fl sig on the hi/lo nu axis, shifted w/r/t hi/lo main central freq. 
+    
+        % Hi Hi LO-side Frequency Axis fit, extraction, error
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelHiHiLOErr2(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelHiHiLOErr2(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width          
+        FlpksDwnFitsHiHiLO2{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell
+        
+       FlDwnFitHiHiLO2c1(1,i) = FlpksDwnFitsHiHiLO2{1,i}.c1.*1e9;
+       FlDwnFitHiHiLO2b1(1,i) = FlpksDwnFitsHiHiLO2{1,i}.b1.*1e9;        
+
+	% Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+       FlDwnCenterGLineHiHiLOErr2{1,i} = FlpksDwnFitsHiHiLO2{1,i}.Y0 + FlpksDwnFitsHiHiLO2{1,i}.a1*exp(-((NuXAxisDwn_RelHiHiLOErr2(:,i)-FlDwnFitHiHiLO2b1(1,i))./FlDwnFitHiHiLO2c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrHiHiLO2(1,i) = FlDwnFitHiHiLO2c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrHiHiLO2(1,i) = abs( TiDwn(1,i) - TiDwnErrHiHiLO2(1,i));
+        
+            % 2nd Degree of Error: Hi Error on Lo-side of hi hi freq axis fit
+            FlciDwnFitsHiHiLO2{1,i} = confint(FlpksDwnFitsHiHiLO2{1,i});
+            
+            FlDwnFitHiHiLO2c1Err(1,i) = FlciDwnFitsHiHiLO2{1,i}(1,4).*1e9;
+            FlDwnFitHiHiLO2c1Err(2,i) = FlciDwnFitsHiHiLO2{1,i}(2,4).*1e9;
+
+            FlDwnFitHiHiLO2b1Err(1,i) = FlciDwnFitsHiHiLO2{1,i}(1,3).*1e9;
+            FlDwnFitHiHiLO2b1Err(2,i) = FlciDwnFitsHiHiLO2{1,i}(2,3).*1e9;            
+            
+            % Ti
+            TiDwnErrHiHiLOLo2(1,i) = FlDwnFitHiHiLO2c1(1,i).*abs(FlDwnFitHiHiLO2c1(1,i) - FlDwnFitHiHiLO2c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrHiHiLOLo2(1,i) = abs( TiDwnErrHiHiLOLo2(1,i)); % Changed this
+
+            
+            TiDwnErrHiHiLOHi2(1,i) = FlDwnFitHiHiLO2c1(1,i).*abs(FlDwnFitHiHiLO2c1(1,i) - FlDwnFitHiHiLO2c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); 
+            delTiDwnErrHiHiLOHi2(1,i) = abs(TiDwnErrHiHiLOHi2(1,i) ); % Changed this
+            
+        % Vz- same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrHiHiLO2(1,i)     =  FlDwnFitHiHiLO2b1(1,i);
+        VzDwnErrHiHiLO2(1,i)    = c.*DelNuShiftDwnErrHiHiLO2(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzDwnErrHiHiLO2(1,i) = abs(VzDwn(1,i) - VzDwnErrHiHiLO2(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzDwnErrHiHiLOHi2(1,i) = c.*abs(FlDwnFitHiHiLO2b1(1,i) - FlDwnFitHiHiLO2b1Err(1,i))./Nu0_ArIIAbs;% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+            delVzDwnErrHiHiLOLo2(1,i) = abs(VzDwnErrHiHiLOHi2(1,i));
+            
+            VzDwnErrHiHiLOLo2(1,i) = c.*abs(FlDwnFitHiHiLO2b1(1,i) - FlDwnFitHiHiLO2b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiHiLOHi2(1,i) = abs(VzDwnErrHiHiLOLo2(1,i));
+            
+        % Lo Lo HI-side freq. axis, lo side central transition fit, quantity extraction, and error extraction
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelLoLoHIErr2(:, i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelLoLoHIErr2(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width     
+        
+        FlpksDwnFitsLoLoHI2{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell  
+        
+       FlDwnFitLoLoHI2c1(1,i) = FlpksDwnFitsLoLoHI2{1,i}.c1.*1e9;
+       FlDwnFitLoLoHI2b1(1,i) = FlpksDwnFitsLoLoHI2{1,i}.b1.*1e9;     
+       
+       FlDwnCenterGLineLoLoHIErr2{1,i} = FlpksDwnFitsLoLoHI2{1,i}.Y0 + FlpksDwnFitsLoLoHI2{1,i}.a1*exp(-((NuXAxisDwn_RelLoLoHIErr2(:,i)-FlDwnFitLoLoHI2b1(1,i))./FlDwnFitLoLoHI2c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrLoLoHI2(1,i) = FlDwnFitLoLoHI2c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrLoLoHI2(1,i) = abs( TiDwnErrLoLoHI2(1,i) - TiDwn(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciDwnFitsLoLoHI2{1,i} = confint(FlpksDwnFitsLoLoHI2{1,i});
+            
+            FlDwnFitLoLoHI2c1Err(1,i) = FlciDwnFitsLoLoHI2{1,i}(1,4).*1e9;
+            FlDwnFitLoLoHI2c1Err(2,i) = FlciDwnFitsLoLoHI2{1,i}(2,4).*1e9;
+
+            FlDwnFitLoLoHI2b1Err(1,i) = FlciDwnFitsLoLoHI2{1,i}(1,3).*1e9;
+            FlDwnFitLoLoHI2b1Err(2,i) = FlciDwnFitsLoLoHI2{1,i}(2,3).*1e9;             
+            
+            % Ti
+            TiDwnErrLoLoHILo2(1,i) = FlDwnFitLoLoHI2c1(1,i).*abs(FlDwnFitLoLoHI2c1(1,i) - FlDwnFitLoLoHI2c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiDwnErrLoLoHILo2(1,i) = abs( TiDwnErrLoLoHILo2(1,i)); % Changed this
+
+            TiDwnErrLoLoHIHi2(1,i) = FlDwnFitLoLoHI2c1(1,i).*abs(FlDwnFitLoLoHI2c1(1,i) - FlDwnFitLoLoHI2c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiDwnErrLoLoHIHi2(1,i) = abs(TiDwnErrLoLoHIHi2(1,i) ); % Changed this
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrLoLoHI2(1,i)     =  FlDwnFitLoLoHI2b1(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrLoLoHI2(1,i)    = c.*DelNuShiftDwnErrLoLoHI2(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzDwnErrLoLoHI2(1,i) = abs(VzDwn(1,i) - VzDwnErrLoLoHI2(1,i)); % Absolute value of the velocity shift
+
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzDwnErrLoLoHILo2(1,i) = c.*abs( FlDwnFitLoLoHI2b1(1,i) - FlDwnFitLoLoHI2b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoLoHILo2(1,i) = abs( VzDwnErrLoLoHILo2(1,i));            
+            
+            VzDwnErrLoLoHIHi2(1,i) = c.*abs( FlDwnFitLoLoHI2b1(1,i) - FlDwnFitLoLoHI2b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoLoHIHi2(1,i) = abs(VzDwnErrLoLoHIHi2(1,i));         
+        
+    % 1st Degree of Error: Method 3, mix of +, -
+        % Hi Lo LO-side Frequency Axis fit, extraction, error
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelHiLoErr3(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelHiLoErr3(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width          
+        FlpksDwnFitsHiLo3{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each col of the cell
+
+        FlDwnFitHiLo3c1(1,i) = FlpksDwnFitsHiLo3{1,i}.c1.*1e9;
+        FlDwnFitHiLo3b1(1,i) = FlpksDwnFitsHiLo3{1,i}.b1.*1e9;         
+        
+        FlDwnCenterGLineHiLoErr3{1,i} = FlpksDwnFitsHiLo3{1,i}.Y0 + FlpksDwnFitsHiLo3{1,i}.a1*exp(-((NuXAxisDwn_RelHiLoErr3(:,i)-FlDwnFitHiLo3b1(1,i))./FlDwnFitHiLo3c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrHiLo3(1,i) = FlDwnFitHiLo3c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrHiLo3(1,i) = abs( TiDwn(1,i) - TiDwnErrHiLo3(1,i));
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciDwnFitsHiLo3{1,i} = confint(FlpksDwnFitsHiLo3{1,i});
+            
+            FlDwnFitHiLo3c1Err(1,i) = FlciDwnFitsHiLo3{1,i}(1,4).*1e9;
+            FlDwnFitHiLo3c1Err(2,i) = FlciDwnFitsHiLo3{1,i}(2,4).*1e9;
+
+            FlDwnFitHiLo3b1Err(1,i) = FlciDwnFitsHiLo3{1,i}(1,3).*1e9;
+            FlDwnFitHiLo3b1Err(2,i) = FlciDwnFitsHiLo3{1,i}(2,3).*1e9;              
+            
+            % Ti
+            TiDwnErrHiLoLo3(1,i) = FlDwnFitHiLo3c1(1,i).*abs(FlDwnFitHiLo3c1(1,i) - FlDwnFitHiLo3c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this    
+            delTiDwnErrHiLoLo3(1,i) = abs( TiDwnErrHiLoLo3(1,i)); % Changed this    
+
+            TiDwnErrHiLoHi3(1,i) = FlDwnFitHiLo3c1(1,i).*abs(FlDwnFitHiLo3c1(1,i) -FlDwnFitHiLo3c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiDwnErrHiLoHi3(1,i) = abs(TiDwnErrHiLoHi3(1,i) ); % Changed this
+        
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrHiLo3(1,i)     =  FlDwnFitHiLo3b1(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrHiLo3(1,i)    = abs(c.*DelNuShiftDwnErrHiLo3(1,i))./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzDwnErrHiLo3(1,i) = abs(VzDwn(1,i) - VzDwnErrHiLo3(1,i)); % Absolute value of the velocity shift
+
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzDwnErrHiLoLo3(1,i) = c.*abs(FlDwnFitHiLo3b1(1,i) - FlDwnFitHiLo3b1Err(1,i))./Nu0_ArIIAbs;% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+            delVzDwnErrHiLoLo3(1,i) = abs( VzDwnErrHiLoLo3(1,i));
+            
+            VzDwnErrHiLoHi3(1,i) = c.*abs(FlDwnFitHiLo3b1(1,i) - FlDwnFitHiLo3b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrHiLoHi3(1,i) = abs(VzDwnErrHiLoHi3(1,i) );
+            
+        % Lo Hi HI-side freq. axis, lo side central transition fit, quantity extraction, and error extraction
+        [xFlDataDwn, yFlDataDwn] = prepareCurveData(NuXAxisDwn_RelLoHiErr3(:,i).*1e-9, FlSig_FinalDwn{1,i});        
+        opts.StartPoint = [Y0Dwn(1,i) FlpksDwn(1,i) NuXAxisDwn_RelLoHiErr3(FllocsDwn(1,i), i).*1e-9 GWidthDwnPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width          
+        FlpksDwnFitsLoHi3{1,i} = fit(xFlDataDwn, yFlDataDwn, ft, opts); % Fits stored in each row of the cell  
+        
+        FlDwnFitLoHi3c1(1,i) = FlpksDwnFitsLoHi3{1,i}.c1.*1e9;
+        FlDwnFitLoHi3b1(1,i) = FlpksDwnFitsLoHi3{1,i}.b1.*1e9;        
+
+        FlDwnCenterGLineLoHiErr3{1,i} = FlpksDwnFitsLoHi3{1,i}.Y0 + FlpksDwnFitsLoHi3{1,i}.a1*exp(-((NuXAxisDwn_RelLoHiErr3(:,i)-FlDwnFitLoHi3b1(1,i))./FlDwnFitLoHi3c1(1,i)).^2);
+        
+        % Ti - same process as for the fluorescence signal on the central relative frequency axis.
+        TiDwnErrLoHi3(1,i) = FlDwnFitLoHi3c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiDwnErrLoHi3(1,i) = abs(TiDwnErrLoHi3(1,i) - TiDwn(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciDwnFitsLoHi3{1,i} = confint(FlpksDwnFitsLoHi3{1,i});
+            
+            FlDwnFitLoHi3c1Err(1,i) = FlciDwnFitsLoHi3{1,i}(1,4).*1e9;
+            FlDwnFitLoHi3c1Err(2,i) = FlciDwnFitsLoHi3{1,i}(2,4).*1e9;
+
+            FlDwnFitLoHi3b1Err(1,i) = FlciDwnFitsLoHi3{1,i}(1,3).*1e9;
+            FlDwnFitLoHi3b1Err(2,i) = FlciDwnFitsLoHi3{1,i}(2,3).*1e9;            
+            
+            TiDwnErrLoHiLo3(1,i) = FlDwnFitLoHi3c1(1,i).*abs(FlDwnFitLoHi3c1(1,i) - FlDwnFitLoHi3c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this   
+            delTiDwnErrLoHiLo3(1,i) = abs(TiDwnErrLoHiLo3(1,i)); % Changed this   
+
+            TiDwnErrLoHiHi3(1,i) = FlDwnFitLoHi3c1(1,i).*abs(FlDwnFitLoHi3c1(1,i) - FlDwnFitLoHi3c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this   
+            delTiDwnErrLoHiHi3(1,i) = abs(TiDwnErrLoHiHi3(1,i) ); % Changed this   
+            
+        % Vz - same process as for the fluorescence signal on the central relative frequency axis.
+        DelNuShiftDwnErrLoHi3(1,i)     =  FlDwnFitLoHi3b1(1,i);% FlciDwnFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzDwnErrLoHi3(1,i)    = c.*DelNuShiftDwnErrLoHi3(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzDwnErrLoHi3(1,i) = abs(VzDwn(1,i) - VzDwnErrLoHi3(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzDwnErrLoHiLo3(1,i) = c.*abs(FlDwnFitLoHi3b1(1,i) - FlDwnFitLoHi3b1Err(1,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoHiLo3(1,i) = abs( VzDwnErrLoHiLo3(1,i));            
+            
+            VzDwnErrLoHiHi3(1,i) = c.*abs(FlDwnFitLoHi3b1(1,i) - FlDwnFitLoHi3b1Err(2,i))./Nu0_ArIIAbs;
+            delVzDwnErrLoHiHi3(1,i) = abs(VzDwnErrLoHiHi3(1,i) );  
+
+%%%%%%%%%%%%%
+% % UP SCAN - same routine as for the down scan detailed above
+%%%%%%%%%%%%%
+
+    FlpksUpIndRange = [FllocsUp(1,i) - 20000  :  FllocsUp(1,i) + 20000]';
+    FlpksUpIndRangeCell{1,i} = FlpksUpIndRange;
+    
+    % Central frequency axis values
+    [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_Rel(:, i).*1e-9, FlSig_FinalUp{1,i});
+    Y0Up(1,i) = mean(FlSig_FinalUp{1,i}(1:100000,1));
+
+    % Set up fittype and options.
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_Rel(FllocsUp(1,i),i).*1e-9 GWidthUpPP(1,i)]; 
+    
+    FlpksUpFits{1,i} = fit( xFlDataUp, yFlDataUp, ft, opts); %  gaussEqn , opts 'gauss1',
+    FlUpFitc1(1,i) = FlpksUpFits{1,i}.c1.*1e9;
+    FlUpFitb1(1,i) = FlpksUpFits{1,i}.b1.*1e9;
+    
+    FlUpCenterGLine{1,i} = FlpksUpFits{1,i}.Y0 + FlpksUpFits{1,i}.a1*exp(-((NuXAxisUp_Rel(:,i)-FlUpFitb1(1,i))./FlUpFitc1(1,i)).^2);
+
+    % Extract the quantities of interest
+    % Ti
+    FlFWHMUp(1,i) = 2*sqrt(log(2))*FlUpFitc1(1,i); % converting the c1 coefficient of the gaussian fit to FWHM
+    TiUp(1,i) = FlUpFitc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+    
+    % Vz
+    NuShiftUp(1,i) =  FlUpFitb1(1,i); % central frequency found by fitting the Fl. signal with a Gaussian
+    VzUp(1,i) = c.*NuShiftUp(1,i)./Nu0_ArIIAbs;
+    
+    
+    % ERROR ANALYSIS
+    % Direct error From Gaussian Fits of Fl Sig on Main Rel. Freq. axis
+        % Ti
+        FlciUpFits{1,i} = confint(FlpksUpFits{1,i});
+    
+        % Ti
+        FlUpFitc1Err(1,i) = FlciUpFits{1,i}(1,4).*1e9;% Low
+        FlUpFitc1Err(2,i) = FlciUpFits{1,i}(2,4).*1e9;% Upp
+
+        FlUpFitb1Err(1,i) = FlciUpFits{1,i}(1,3).*1e9; % Low
+        FlUpFitb1Err(2,i) = FlciUpFits{1,i}(2,3).*1e9; % Upp
+        
+        %Lo
+        FlUpCenterGLineErrLo{1,i} = FlciUpFits{1,i}(1,1) + FlciUpFits{1,i}(1,2)*exp(-((NuXAxisUp_Rel(:,i)-FlUpFitb1Err(1,i))./FlUpFitc1Err(1,i)).^2);
+
+        
+        FlFWHMUpErrLo(1,i) = 2*sqrt(log(2))*(FlUpFitc1(1,i) - FlUpFitc1Err(1,i)); % Abs. value of Doppler Broadening error
+
+        TiUpErrLo(1,i)     = FlUpFitc1(1,i).*abs(FlUpFitc1(1,i) - FlUpFitc1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Updated calculation of error on Ti error
+        delTiUpErrLo(1,i)  = abs(  TiUpErrLo(1,i)); %TiUp(1,i) -
+        
+        % Hi
+        FlUpCenterGLineErrHi{1,i} = FlciUpFits{1,i}(2,1) + FlciUpFits{1,i}(2,2)*exp(-((NuXAxisUp_Rel(:,i)-FlUpFitb1Err(2,i))./FlUpFitc1Err(2,i)).^2);        
+        
+        FlFWHMUpErrHi(1,i) = 2*sqrt(log(2))*(FlUpFitc1Err(2,i) - FlUpFitc1(1,i)); % Abs. value of Doppler Broadening error
+        
+        TiUpErrHi(1,i)     = FlUpFitc1(1,i).*abs(FlUpFitc1(1,i) - FlUpFitc1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+        delTiUpErrHi(1,i)  = abs(TiUpErrHi(1,i) );% -  TiUp(1,i)
+        
+        % Vz
+        % The difference between the hi/lo values of the frequency of the peak from the Gaussian fit and the 0 value of the transition freq. 
+        
+        % Lo
+        DelNuShiftUpLo(1,i)    =  FlUpFitb1Err(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrLo(1,i)         = c.*abs(FlUpFitb1(1,i) - FlUpFitb1Err(1,i))./Nu0_ArIIAbs; % Changed; Coordinate value of the velocity from the shift
+        delVzUpErrLo(1,i)      = abs( VzUpErrLo(1,i)); % Absolute value of the velocity shift         VzUp(1,i) -
+        
+        % Hi
+        DelNuShiftUpHi(1,i)   =  FlUpFitb1Err(2,i); % FlciUpFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzUpErrHi(1,i)        = c.*abs(FlUpFitb1(1,i) - DelNuShiftUpHi(1,i))./Nu0_ArIIAbs; % Changed
+        delVzUpErrHi(1,i)     = abs( VzUpErrHi(1,i)); %VzUp(1,i) -
+    
+    % 1st Degree: 0th Method of Error Calculation - plot the Fl signal on the lo/hi error freq axis, fit to Gaussian, extract values.
+    
+        % FIT: Lo-side freq. axis fit, quantity extraction, and error extraction
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelLoErr0(:,i).*1e-9, FlSig_FinalUp{1,i});
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelLoErr0(FllocsUp(1,i),i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width       
+        FlpksUpFitsLo0{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell       
+    
+        FlUpFitLo0c1(1,i) = FlpksUpFitsLo0{1,i}.c1.*1e9;
+        FlUpFitLo0b1(1,i) = FlpksUpFitsLo0{1,i}.b1.*1e9;
+       
+        FlUpCenterGLineLoErr0{1,i} = FlpksUpFitsLo0{1,i}.Y0 + FlpksUpFitsLo0{1,i}.a1*exp(-((NuXAxisUp_RelLoErr0(:,i)-FlUpFitLo0b1(1,i))./FlUpFitLo0c1(1,i)).^2);
+        
+        
+        % Ti
+        TiUpErrLo0(1,i) = FlUpFitLo0c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrLo0(1,i) = abs( TiUp(1,i) - TiUpErrLo0(1,i));
+        
+            % 2nd Degree: Ti Error on Lo-side freq. axis fit
+            FlciUpFitsLo0{1,i} = confint(FlpksUpFitsLo0{1,i});
+            
+            FlUpFitLo0c1Err(1,i) = FlciUpFitsLo0{1,i}(1,4).*1e9;
+            FlUpFitLo0c1Err(2,i) = FlciUpFitsLo0{1,i}(2,4).*1e9;
+
+            FlUpFitLo0b1Err(1,i) = FlciUpFitsLo0{1,i}(1,3).*1e9;
+            FlUpFitLo0b1Err(2,i) = FlciUpFitsLo0{1,i}(2,3).*1e9;
+            
+            % Ti
+            TiUpErrLoLo0(1,i)  = FlUpFitLo0c1(1,i).*abs(FlUpFitLo0c1(1,i) - FlUpFitLo0c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrLoLo0(1,i) = abs( TiUpErrLoLo0(1,i)); % Changed this TiUp(1,i) -
+
+            TiUpErrLoHi0(1,i) = FlUpFitLo0c1(1,i).*abs(FlUpFitLo0c1(1,i) - FlUpFitLo0c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrLoHi0(1,i) = abs(TiUpErrLoHi0(1,i)); % Changed this - TiUp(1,i)
+            
+        % Vz
+        % Use this for the error on the Vz
+        DelNuShiftUpErrLo0(1,i)     =  FlUpFitLo0b1(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrLo0(1,i)    = c.*DelNuShiftUpErrLo0(1,i)./Nu0_ArIIAbs; % Changed; Coordinate value of the velocity from the shift
+        delVzUpErrLo0(1,i) = abs(VzUp(1,i) - VzUpErrLo0(1,i)); % Absolute value of the velocity shift
+            
+            % Vz Error on Lo-side freq axis fit
+            VzUpErrLoLo0(1,i) = c.*abs(FlUpFitLo0b1(1,i) - FlUpFitLo0b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrLoLo0(1,i) = abs(VzUpErrLoLo0(1,i));
+            % Hi
+            VzUpErrLoHi0(1,i) = c.*abs(FlUpFitLo0b1(1,i) - FlUpFitLo0b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrLoHi0(1,i) = abs(VzUpErrLoHi0(1,i) );
+        
+        % %
+        % FIT: Hi-side Frequency Axis fit, extraction, error
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelHiErr0(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelHiErr0(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width
+        FlpksUpFitsHi0{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell
+        
+       FlUpFitHi0c1(1,i) = FlpksUpFitsHi0{1,i}.c1.*1e9;
+       FlUpFitHi0b1(1,i) = FlpksUpFitsHi0{1,i}.b1.*1e9;
+
+       FlUpCenterGLineHiErr0{1,i} = FlpksUpFitsHi0{1,i}.Y0 + FlpksUpFitsHi0{1,i}.a1*exp(-((NuXAxisUp_RelHiErr0(:,i)-FlUpFitHi0b1(1,i))./FlUpFitHi0c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrHi0(1,i) = FlUpFitHi0c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrHi0(1,i) = abs( TiUpErrHi0(1,i) - TiUp(1,i) );
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciUpFitsHi0{1,i} = confint(FlpksUpFitsHi0{1,i});
+            
+            FlUpFitHi0c1Err(1,i) = FlciUpFitsHi0{1,i}(1,4).*1e9;
+            FlUpFitHi0c1Err(2,i) = FlciUpFitsHi0{1,i}(2,4).*1e9;
+
+            FlUpFitHi0b1Err(1,i) = FlciUpFitsHi0{1,i}(1,3).*1e9;
+            FlUpFitHi0b1Err(2,i) = FlciUpFitsHi0{1,i}(2,3).*1e9;
+            
+            % Ti
+            TiUpErrHiLo0(1,i) = FlUpFitHi0c1(1,i).*abs(FlUpFitHi0c1(1,i) - FlUpFitHi0c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiLo0(1,i) = abs( TiUpErrHiLo0(1,i)); % Changed this
+            
+            TiUpErrHiHi0(1,i) = FlUpFitHi0c1(1,i).*abs( FlUpFitHi0c1(1,i) - FlUpFitHi0c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiHi0(1,i) = abs(TiUpErrHiHi0(1,i) ); % Changed this
+            
+        % Vz
+        DelNuShiftUpErrHi0(1,i)    =  FlUpFitHi0b1(1,i); % FlciUpFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzUpErrHi0(1,i)        = c.*DelNuShiftUpErrHi0(1,i)./Nu0_ArIIAbs; % Changed
+        delVzUpErrHi0(1,i)     = abs(VzUp(1,i) - VzUpErrHi0(1,i));
+        
+            % Vz Error on Hi-side freq axis fit
+            VzUpErrHiLo0(1,i) = c.*abs(FlUpFitHi0b1(1,i) - FlUpFitHi0b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrHiLo0(1,i) = abs(VzUpErrHiLo0(1,i));            
+            
+            VzUpErrHiHi0(1,i) = c.*abs(FlUpFitHi0b1(1,i) - FlUpFitHi0b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrHiHi0(1,i) = abs(VzUpErrHiHi0(1,i) );           
+            
+    % 1st Degree of Error: 1st Method - plot the fl sig on the nu axis shifted w/r/t main central transition freq.
+    
+        % FIT: Lo-side freq. axis fit, quantity extraction, and error extraction
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelLoErr1(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelLoErr1(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width               
+        FlpksUpFitsLo1{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell       
+        
+        FlUpFitLo1c1(1,i) = FlpksUpFitsLo1{1,i}.c1.*1e9;
+        FlUpFitLo1b1(1,i) = FlpksUpFitsLo1{1,i}.b1.*1e9;
+
+        FlUpCenterGLineLoErr1{1,i} = FlpksUpFitsLo1{1,i}.Y0 + FlpksUpFitsLo1{1,i}.a1*exp(-((NuXAxisUp_RelLoErr1(:,i)-FlUpFitLo1b1(1,i))./FlUpFitLo1c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrLo1(1,i) = FlUpFitLo1c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrLo1(1,i) = abs( TiUp(1,i) - TiUpErrLo1(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciUpFitsLo1{1,i} = confint(FlpksUpFitsLo1{1,i});
+            
+            FlUpFitLo1c1Err(1,i) = FlciUpFitsLo1{1,i}(1,4).*1e9;
+            FlUpFitLo1c1Err(2,i) = FlciUpFitsLo1{1,i}(2,4).*1e9;
+
+            FlUpFitLo1b1Err(1,i) = FlciUpFitsLo1{1,i}(1,3).*1e9;
+            FlUpFitLo1b1Err(2,i) = FlciUpFitsLo1{1,i}(2,3).*1e9;
+            
+            % Ti
+            TiUpErrLoLo1(1,i) = FlUpFitLo1c1(1,i).*abs(FlUpFitLo1c1(1,i) - FlUpFitLo1c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % changed this 
+            delTiUpErrLoLo1(1,i) = abs(TiUpErrLoLo1(1,i)); % changed this 
+
+            TiUpErrLoHi1(1,i) = FlUpFitLo1c1(1,i).*abs(FlUpFitLo1c1(1,i) - FlUpFitLo1c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrLoHi1(1,i) = abs(TiUpErrLoHi1(1,i)); % Changed this
+            
+        % Vz    
+        DelNuShiftUpErrLo1(1,i)     =  FlUpFitLo1b1(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrLo1(1,i)    = c.*DelNuShiftUpErrLo1(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzUpErrLo1(1,i) = abs(VzUp(1,i) - VzUpErrLo1(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzUpErrLoLo1(1,i) = c.*abs(FlUpFitLo1b1(1,i) - FlUpFitLo1b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrLoLo1(1,i) = abs( VzUpErrLoLo1(1,i));
+            
+            VzUpErrLoHi1(1,i) = c.*abs(FlUpFitLo1b1(1,i) - FlUpFitLo1b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrLoHi1(1,i) = abs(VzUpErrLoHi1(1,i) );
+        
+        % %
+        % Hi-side Frequency Axis fit, extraction, error
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelHiErr1(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelHiErr1(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width   
+        FlpksUpFitsHi1{1,i} = fit(xFlDataUp, yFlDataUp,ft, opts); % Fits stored in each row of the cell
+        
+       FlUpFitHi1c1(1,i) = FlpksUpFitsHi1{1,i}.c1.*1e9;
+       FlUpFitHi1b1(1,i) = FlpksUpFitsHi1{1,i}.b1.*1e9;
+       
+       FlUpCenterGLineHiErr1{1,i} = FlpksUpFitsHi1{1,i}.Y0 + FlpksUpFitsHi1{1,i}.a1*exp(-((NuXAxisUp_RelHiErr1(:,i)-FlUpFitHi1b1(1,i))./FlUpFitHi1c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrHi1(1,i) = FlUpFitHi1c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrHi1(1,i) = abs(TiUpErrHi1(1,i) - TiUp(1,i));
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciUpFitsHi1{1,i} = confint(FlpksUpFitsHi1{1,i});
+            
+            FlUpFitHi1c1Err(1,i) = FlciUpFitsHi1{1,i}(1,4).*1e9;
+            FlUpFitHi1c1Err(2,i) = FlciUpFitsHi1{1,i}(2,4).*1e9;
+
+            FlUpFitHi1b1Err(1,i) = FlciUpFitsHi1{1,i}(1,3).*1e9;
+            FlUpFitHi1b1Err(2,i) = FlciUpFitsHi1{1,i}(2,3).*1e9;
+            
+            % Ti
+            TiUpErrHiLo1(1,i) = FlUpFitHi1c1(1,i).*abs(FlUpFitHi1c1(1,i) - FlUpFitHi1c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiLo1(1,i) = abs( TiUpErrHiLo1(1,i)); % Changed this
+
+            TiUpErrHiHi1(1,i) = FlUpFitHi1c1(1,i).*abs(FlUpFitHi1c1(1,i) - FlUpFitHi1c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiHi1(1,i) = abs(TiUpErrHiHi1(1,i) ); % Changed this
+            
+        % Vz
+        DelNuShiftUpErrHi1(1,i)    =  FlUpFitHi1b1(1,i); % FlciUpFitsTi{1,i}(2,2) is the right boundary (high value) of error on the fluorescent signal Gauss fit central frequency
+        VzUpErrHi1(1,i)        = c.*DelNuShiftUpErrHi1(1,i)./Nu0_ArIIAbs; 
+        delVzUpErrHi1(1,i)     = abs(VzUp(1,i) - VzUpErrHi1(1,i));        
+        
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzUpErrHiLo1(1,i) = c.*abs(FlUpFitHi1b1(1,i) - FlUpFitHi1b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrHiLo1(1,i) = abs( VzUpErrHiLo1(1,i));            
+            
+            VzUpErrHiHi1(1,i) = c.*abs(FlUpFitHi1b1(1,i) - FlUpFitHi1b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrHiHi1(1,i) = abs(VzUpErrHiHi1(1,i)); 
+            
+    % 1st Degree of Error - Method 2: Plot the fl sig on the hi/lo nu axis, shifted w/r/t hi/lo main central freq. 
+        % Hi Hi LO-side Frequency Axis fit, extraction, error
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelHiHiLOErr2(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelHiHiLOErr2(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)];    
+        FlpksUpFitsHiHiLO2{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell
+        
+       FlUpFitHiHiLO2c1(1,i) = FlpksUpFitsHiHiLO2{1,i}.c1.*1e9;
+       FlUpFitHiHiLO2b1(1,i) = FlpksUpFitsHiHiLO2{1,i}.b1.*1e9;        
+
+       FlUpCenterGLineHiHiLOErr2{1,i} = FlpksUpFitsHiHiLO2{1,i}.Y0 + FlpksUpFitsHiHiLO2{1,i}.a1*exp(-((NuXAxisUp_RelHiHiLOErr2(:,i)-FlUpFitHiHiLO2b1(1,i))./FlUpFitHiHiLO2c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrHiHiLO2(1,i) = FlUpFitHiHiLO2c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrHiHiLO2(1,i) = abs( TiUp(1,i) - TiUpErrHiHiLO2(1,i));
+        
+            % 2nd Degree of Error: Hi Error on Lo-side of hi hi freq axis fit... this is getting ridiculous...
+            FlciUpFitsHiHiLO2{1,i} = confint(FlpksUpFitsHiHiLO2{1,i});
+            
+            FlUpFitHiHiLO2c1Err(1,i) = FlciUpFitsHiHiLO2{1,i}(1,4).*1e9;
+            FlUpFitHiHiLO2c1Err(2,i) = FlciUpFitsHiHiLO2{1,i}(2,4).*1e9;
+
+            FlUpFitHiHiLO2b1Err(1,i) = FlciUpFitsHiHiLO2{1,i}(1,3).*1e9;
+            FlUpFitHiHiLO2b1Err(2,i) = FlciUpFitsHiHiLO2{1,i}(2,3).*1e9;            
+            
+            % Ti
+            TiUpErrHiHiLOLo2(1,i) = FlUpFitHiHiLO2c1(1,i).*abs(FlUpFitHiHiLO2c1(1,i) - FlUpFitHiHiLO2c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiHiLOLo2(1,i) = abs( TiUpErrHiHiLOLo2(1,i)); % Changed this
+
+            
+            TiUpErrHiHiLOHi2(1,i) = FlUpFitHiHiLO2c1(1,i).*abs(FlUpFitHiHiLO2c1(1,i) - FlUpFitHiHiLO2c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiHiLOHi2(1,i) = abs(TiUpErrHiHiLOHi2(1,i) ); % Changed this
+            
+        % Vz
+        DelNuShiftUpErrHiHiLO2(1,i)     =  FlUpFitHiHiLO2b1(1,i);
+        VzUpErrHiHiLO2(1,i)    = c.*DelNuShiftUpErrHiHiLO2(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzUpErrHiHiLO2(1,i) = abs(VzUp(1,i) - VzUpErrHiHiLO2(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzUpErrHiHiLOHi2(1,i) = c.*abs(FlUpFitHiHiLO2b1(1,i) - FlUpFitHiHiLO2b1Err(1,i))./Nu0_ArIIAbs;% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+            delVzUpErrHiHiLOLo2(1,i) = abs(VzUpErrHiHiLOHi2(1,i));
+            
+            VzUpErrHiHiLOLo2(1,i) = c.*abs(FlUpFitHiHiLO2b1(1,i) - FlUpFitHiHiLO2b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrHiHiLOHi2(1,i) = abs(VzUpErrHiHiLOLo2(1,i));
+            
+        % %
+        % Lo Lo HI-side freq. axis, lo side central transition fit, quantity extraction, and error extraction
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelLoLoHIErr2(:, i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelLoLoHIErr2(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width     
+        
+        FlpksUpFitsLoLoHI2{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell  
+        
+       FlUpFitLoLoHI2c1(1,i) = FlpksUpFitsLoLoHI2{1,i}.c1.*1e9;
+       FlUpFitLoLoHI2b1(1,i) = FlpksUpFitsLoLoHI2{1,i}.b1.*1e9;     
+       
+       FlUpCenterGLineLoLoHIErr2{1,i} = FlpksUpFitsLoLoHI2{1,i}.Y0 + FlpksUpFitsLoLoHI2{1,i}.a1*exp(-((NuXAxisUp_RelLoLoHIErr2(:,i)-FlUpFitLoLoHI2b1(1,i))./FlUpFitLoLoHI2c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrLoLoHI2(1,i) = FlUpFitLoLoHI2c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrLoLoHI2(1,i) = abs( TiUpErrLoLoHI2(1,i) - TiUp(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciUpFitsLoLoHI2{1,i} = confint(FlpksUpFitsLoLoHI2{1,i});
+            
+            FlUpFitLoLoHI2c1Err(1,i) = FlciUpFitsLoLoHI2{1,i}(1,4).*1e9;
+            FlUpFitLoLoHI2c1Err(2,i) = FlciUpFitsLoLoHI2{1,i}(2,4).*1e9;
+
+            FlUpFitLoLoHI2b1Err(1,i) = FlciUpFitsLoLoHI2{1,i}(1,3).*1e9;
+            FlUpFitLoLoHI2b1Err(2,i) = FlciUpFitsLoLoHI2{1,i}(2,3).*1e9;             
+            
+            % Ti
+            TiUpErrLoLoHILo2(1,i) = FlUpFitLoLoHI2c1(1,i).*abs(FlUpFitLoLoHI2c1(1,i) - FlUpFitLoLoHI2c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrLoLoHILo2(1,i) = abs( TiUpErrLoLoHILo2(1,i)); % Changed this
+
+            TiUpErrLoLoHIHi2(1,i) = FlUpFitLoLoHI2c1(1,i).*abs(FlUpFitLoLoHI2c1(1,i) - FlUpFitLoLoHI2c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrLoLoHIHi2(1,i) = abs(TiUpErrLoLoHIHi2(1,i) ); % Changed this
+            
+        % Vz
+        DelNuShiftUpErrLoLoHI2(1,i)     =  FlUpFitLoLoHI2b1(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrLoLoHI2(1,i)    = c.*DelNuShiftUpErrLoLoHI2(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzUpErrLoLoHI2(1,i) = abs(VzUp(1,i) - VzUpErrLoLoHI2(1,i)); % Absolute value of the velocity shift
+
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzUpErrLoLoHILo2(1,i) = c.*abs( FlUpFitLoLoHI2b1(1,i) - FlUpFitLoLoHI2b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrLoLoHILo2(1,i) = abs( VzUpErrLoLoHILo2(1,i));            
+            
+            VzUpErrLoLoHIHi2(1,i) = c.*abs( FlUpFitLoLoHI2b1(1,i) - FlUpFitLoLoHI2b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrLoLoHIHi2(1,i) = abs(VzUpErrLoLoHIHi2(1,i));         
+        
+    % 1st Degree of Error: Method 3, mix of +, -
+        % Hi Lo LO-side Frequency Axis fit, extraction, error
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelHiLoErr3(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelHiLoErr3(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width          
+        FlpksUpFitsHiLo3{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each col of the cell
+
+        FlUpFitHiLo3c1(1,i) = FlpksUpFitsHiLo3{1,i}.c1.*1e9;
+        FlUpFitHiLo3b1(1,i) = FlpksUpFitsHiLo3{1,i}.b1.*1e9;         
+        
+        FlUpCenterGLineHiLoErr3{1,i} = FlpksUpFitsHiLo3{1,i}.Y0 + FlpksUpFitsHiLo3{1,i}.a1*exp(-((NuXAxisUp_RelHiLoErr3(:,i)-FlUpFitHiLo3b1(1,i))./FlUpFitHiLo3c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrHiLo3(1,i) = FlUpFitHiLo3c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrHiLo3(1,i) = abs( TiUp(1,i) - TiUpErrHiLo3(1,i));
+        
+            % 2nd Degree of Error: Error on Hi-side freq axis fit
+            FlciUpFitsHiLo3{1,i} = confint(FlpksUpFitsHiLo3{1,i});
+            
+            FlUpFitHiLo3c1Err(1,i) = FlciUpFitsHiLo3{1,i}(1,4).*1e9;
+            FlUpFitHiLo3c1Err(2,i) = FlciUpFitsHiLo3{1,i}(2,4).*1e9;
+
+            FlUpFitHiLo3b1Err(1,i) = FlciUpFitsHiLo3{1,i}(1,3).*1e9;
+            FlUpFitHiLo3b1Err(2,i) = FlciUpFitsHiLo3{1,i}(2,3).*1e9;              
+            
+            % Ti
+            TiUpErrHiLoLo3(1,i) = FlUpFitHiLo3c1(1,i).*abs(FlUpFitHiLo3c1(1,i) - FlUpFitHiLo3c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this    
+            delTiUpErrHiLoLo3(1,i) = abs( TiUpErrHiLoLo3(1,i)); % Changed this    
+
+            TiUpErrHiLoHi3(1,i) = FlUpFitHiLo3c1(1,i).*abs(FlUpFitHiLo3c1(1,i) -FlUpFitHiLo3c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this
+            delTiUpErrHiLoHi3(1,i) = abs(TiUpErrHiLoHi3(1,i) ); % Changed this
+        
+        % Vz
+        DelNuShiftUpErrHiLo3(1,i)     =  FlUpFitHiLo3b1(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrHiLo3(1,i)    = abs(c.*DelNuShiftUpErrHiLo3(1,i))./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzUpErrHiLo3(1,i) = abs(VzUp(1,i) - VzUpErrHiLo3(1,i)); % Absolute value of the velocity shift
+
+            % 2nd Degree of Error: Vz Error on Lo-side freq axis fit
+            VzUpErrHiLoLo3(1,i) = c.*abs(FlUpFitHiLo3b1(1,i) - FlUpFitHiLo3b1Err(1,i))./Nu0_ArIIAbs;% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+            delVzUpErrHiLoLo3(1,i) = abs( VzUpErrHiLoLo3(1,i));
+            
+            VzUpErrHiLoHi3(1,i) = c.*abs(FlUpFitHiLo3b1(1,i) - FlUpFitHiLo3b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrHiLoHi3(1,i) = abs(VzUpErrHiLoHi3(1,i) );
+            
+        % %
+        % Lo Hi HI-side freq. axis, lo side central transition fit, quantity extraction, and error extraction
+        [xFlDataUp, yFlDataUp] = prepareCurveData(NuXAxisUp_RelLoHiErr3(:,i).*1e-9, FlSig_FinalUp{1,i});        
+        opts.StartPoint = [Y0Up(1,i) FlpksUp(1,i) NuXAxisUp_RelLoHiErr3(FllocsUp(1,i), i).*1e-9 GWidthUpPP(1,i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width          
+        FlpksUpFitsLoHi3{1,i} = fit(xFlDataUp, yFlDataUp, ft, opts); % Fits stored in each row of the cell  
+        
+        FlUpFitLoHi3c1(1,i) = FlpksUpFitsLoHi3{1,i}.c1.*1e9;
+        FlUpFitLoHi3b1(1,i) = FlpksUpFitsLoHi3{1,i}.b1.*1e9;        
+
+        FlUpCenterGLineLoHiErr3{1,i} = FlpksUpFitsLoHi3{1,i}.Y0 + FlpksUpFitsLoHi3{1,i}.a1*exp(-((NuXAxisUp_RelLoHiErr3(:,i)-FlUpFitLoHi3b1(1,i))./FlUpFitLoHi3c1(1,i)).^2);
+        
+        % Ti
+        TiUpErrLoHi3(1,i) = FlUpFitLoHi3c1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2);
+        delTiUpErrLoHi3(1,i) = abs(TiUpErrLoHi3(1,i) - TiUp(1,i));
+        
+            % 2nd Degree of Error: Error on Lo-side freq. axis fit
+            FlciUpFitsLoHi3{1,i} = confint(FlpksUpFitsLoHi3{1,i});
+            
+            FlUpFitLoHi3c1Err(1,i) = FlciUpFitsLoHi3{1,i}(1,4).*1e9;
+            FlUpFitLoHi3c1Err(2,i) = FlciUpFitsLoHi3{1,i}(2,4).*1e9;
+
+            FlUpFitLoHi3b1Err(1,i) = FlciUpFitsLoHi3{1,i}(1,3).*1e9;
+            FlUpFitLoHi3b1Err(2,i) = FlciUpFitsLoHi3{1,i}(2,3).*1e9;            
+            
+            TiUpErrLoHiLo3(1,i) = FlUpFitLoHi3c1(1,i).*abs(FlUpFitLoHi3c1(1,i) - FlUpFitLoHi3c1Err(1,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this   
+            delTiUpErrLoHiLo3(1,i) = abs(TiUpErrLoHiLo3(1,i)); % Changed this   
+
+            TiUpErrLoHiHi3(1,i) = FlUpFitLoHi3c1(1,i).*abs(FlUpFitLoHi3c1(1,i) - FlUpFitLoHi3c1Err(2,i)).*mAr.*c^2./(elm*Nu0_ArIIAbs^2); % Changed this   
+            delTiUpErrLoHiHi3(1,i) = abs(TiUpErrLoHiHi3(1,i) ); % Changed this   
+            
+        % Vz
+        DelNuShiftUpErrLoHi3(1,i)     =  FlUpFitLoHi3b1(1,i);% FlciUpFits{1,i}(1,2) is the left boundary (low value) of error 
+        VzUpErrLoHi3(1,i)    = c.*DelNuShiftUpErrLoHi3(1,i)./Nu0_ArIIAbs; % Coordinate value of the velocity from the shift
+        delVzUpErrLoHi3(1,i) = abs(VzUp(1,i) - VzUpErrLoHi3(1,i)); % Absolute value of the velocity shift
+        
+            % 2nd Degree of Error: Vz Error on Hi-side freq axis fit
+            VzUpErrLoHiLo3(1,i) = c.*abs(FlUpFitLoHi3b1(1,i) - FlUpFitLoHi3b1Err(1,i))./Nu0_ArIIAbs;
+            delVzUpErrLoHiLo3(1,i) = abs( VzUpErrLoHiLo3(1,i));            
+            
+            VzUpErrLoHiHi3(1,i) = c.*abs(FlUpFitLoHi3b1(1,i) - FlUpFitLoHi3b1Err(2,i))./Nu0_ArIIAbs;
+            delVzUpErrLoHiHi3(1,i) = abs(VzUpErrLoHiHi3(1,i) );   
+ end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Envelope Error Calculations %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Find all the points above/below the fl signal smoothed 5x the normal amount (5k instead of 1k)
+
+% Pre-allocate variables 
+
+for i = 1:numFiles
+    % Down
+    % find the peaks above the central fluorescence signal line
+    FlDwnHiIndPoints{1,i} = find(FlSig_FinalDwn{1,i} > FlSig_FinalDwnSM{1,i});
+    FlDwnHiPoints{1,i} = FlSig_FinalDwn{1,i}(FlDwnHiIndPoints{1,i}, 1 );
+    NuDwnHiPoints{1,i} = NuXAxisDwn_Rel(FlDwnHiIndPoints{1,i},i);
+
+    % find the peaks below the central fluorescence signal line
+    FlDwnLoIndPoints{1,i} = find(FlSig_FinalDwn{1,i} < FlSig_FinalDwnSM{1,i});
+    FlDwnLoPoints{1,i} = FlSig_FinalDwn{1,i}(FlDwnLoIndPoints{1,i}, 1 );
+    NuDwnLoPoints{1,i} = NuXAxisDwn_Rel(FlDwnLoIndPoints{1,i},i);
+
+    % Up - same process as above
+    FlUpHiIndPoints{1,i} =  find(FlSig_FinalUp{1,i} > FlSig_FinalUpSM{1,i});
+    FlUpHiPoints{1,i} = FlSig_FinalUp{1,i}(FlUpHiIndPoints{1,i}, 1 );
+    NuUpHiPoints{1,i} = NuXAxisUp_Rel(FlUpHiIndPoints{1,i},i);
+
+    FlUpLoIndPoints{1,i} =  find(FlSig_FinalUp{1,i} < FlSig_FinalUpSM{1,i});
+    FlUpLoPoints{1,i} = FlSig_FinalUp{1,i}(FlUpLoIndPoints{1,i}, 1 );
+    NuUpLoPoints{1,i} = NuXAxisUp_Rel(FlUpLoIndPoints{1,i},i);
+end
+
+% Find the peak of the upper and lower peaks around the central line
+
+% Set Min peak distance and width to help the FINDPEAKS function
+MPD_FlErrPksHi = 1.0e8;
+MPW_FlErrPksHi = 6.7e6;
+
+MPD_FlErrPksLo = 1e8;
+MPW_FlErrPksLo = 6.7e6;
+
+for i = 1:numFiles
+    [FlEnvErrPksHiDwn{1,i}, FlEnvErrLocsHiDwn{1,i}] = findpeaks(FlDwnHiPoints{1,i}, NuDwnHiPoints{1,i}, 'MinPeakwidth', MPW_FlErrPksHi, 'MinPeakDistance', MPD_FlErrPksHi); % NuXAxisUp_Rel(:,i),  
+    [FlEnvErrPksLoDwn{1,i}, FlEnvErrLocsLoDwn{1,i}] = findpeaks(-FlDwnLoPoints{1,i}, NuDwnLoPoints{1,i}, 'MinPeakDistance', MPD_FlErrPksLo); % , 'MinPeakwidth', MPW_FlErrPksLo
+    FlEnvErrPksLoDwn{1,i} = -FlEnvErrPksLoDwn{1,i};
+    
+    [FlEnvErrPksHiUp{1,i}, FlEnvErrLocsHiUp{1,i}] = findpeaks(FlUpHiPoints{1,i}, NuUpHiPoints{1,i}, 'MinPeakwidth', MPW_FlErrPksHi, 'MinPeakDistance', MPD_FlErrPksHi); 
+    [FlEnvErrPksLoUp{1,i}, FlEnvErrLocsLoUp{1,i}] = findpeaks(-FlUpLoPoints{1,i}, NuUpLoPoints{1,i}, 'MinPeakDistance', MPD_FlErrPksLo); 
+    FlEnvErrPksLoUp{1,i} = -FlEnvErrPksLoUp{1,i};
+end
+
+%% Fit: Upper and Lower peaks around the signal to Gaussian
+
+% Pre-allocate variables here
+
+%% Fit: Upper and Lower peaks around the signal to Gaussian
+% Optimize the width of the G Fit with width start points
+
+GWidthHiDwnPP     = [0.88, 0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; % PP1
+GWidthLoDwnPP     = [0.88, 0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; % PP1
+
+GWidthHiUpPP     = [0.88, 0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; % PP1
+GWidthLoUpPP     = [0.88, 0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]; % PP1
+
+for i = 1: numFiles
+    % DOWN
+    % HIGH points on DOWN Scan
+    [xFlErrHiDwn, yFlErrHiDwn] = prepareCurveData(FlEnvErrLocsHiDwn{1,i}.*1e-9, FlEnvErrPksHiDwn{1,i});
+    Y0HiDwn(1,i) = mean(FlEnvErrPksHiDwn{1,i}(1:70,1));
+
+    % Set up fittype and options.
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0HiDwn(1,i) FlpksDwn(1,i) NuXAxisDwn_Rel(FllocsDwn(1,i),i).*1e-9 GWidthHiDwnPP(i)];
+
+    % Gaussian Fit
+    FlEnvErrPksHiFitDwn{1,i} = fit(xFlErrHiDwn, yFlErrHiDwn, ft, opts);
+    FlEnvHiFitDwnc1(1,i) = FlEnvErrPksHiFitDwn{1,i}.c1.*1e9;
+    FlEnvHiFitDwnb1(1,i) = FlEnvErrPksHiFitDwn{1,i}.b1.*1e9;
+    
+    FlEnvErrGLineHiDwn{1,i} = FlEnvErrPksHiFitDwn{1,i}.Y0 + FlEnvErrPksHiFitDwn{1,i}.a1*exp(-((FlEnvErrLocsHiDwn{1,i}-FlEnvHiFitDwnb1(1,i))./FlEnvHiFitDwnc1(1,i)).^2);
+
+    % Extracting Values
+    % Ti
+    FlEnvErrHiDwnTi(1,i) = FlEnvHiFitDwnc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2); %Ti
+    delFlEnvErrHiDwnTi(1,i) = abs(FlEnvErrHiDwnTi(1,i) - TiDwn(1,i));
+    
+    % Vz
+    FlEnvErrNuShiftHiDwn(1,i) =  FlEnvHiFitDwnb1(1,i); % central frequency found by fitting the Fl. signal with a Gaussian
+    FlEnvErrHiDwnVz(1,i) = c.*FlEnvErrNuShiftHiDwn(1,i)./Nu0_ArIIAbs; % Vz
+    delFlEnvErrHiDwnVz(1,i) = abs(FlEnvErrHiDwnVz(1,i) - VzDwn(1,i));   
+    
+    % % %
+    % LOW points on DOWN Curve
+    [xFlErrLoDwn, yFlErrLoDwn] = prepareCurveData(FlEnvErrLocsLoDwn{1,i}.*1e-9, FlEnvErrPksLoDwn{1,i});
+    
+    Y0LoDwn(1,i) = mean(FlEnvErrPksLoDwn{1,i}(1:70,1));
+    
+    % Set up fittype and options.
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0LoDwn(1,i) FlpksDwn(1,i) NuXAxisDwn_Rel(FllocsDwn(1,i),i).*1e-9 GWidthLoDwnPP(i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width
+    
+    % Gaussian Fit
+    FlEnvErrPksLoFitDwn{1,i} = fit(xFlErrLoDwn, yFlErrLoDwn, ft, opts);
+    
+    FlEnvLoFitDwnc1(1,i) = FlEnvErrPksLoFitDwn{1,i}.c1.*1e9;
+    FlEnvLoFitDwnb1(1,i) = FlEnvErrPksLoFitDwn{1,i}.b1.*1e9;
+    
+    FlEnvErrGLineLoDwn{1,i} = FlEnvErrPksLoFitDwn{1,i}.Y0 + FlEnvErrPksLoFitDwn{1,i}.a1*exp(-((FlEnvErrLocsLoDwn{1,i}-FlEnvLoFitDwnb1(1,i))./FlEnvLoFitDwnc1(1,i)).^2);
+    
+    % Extracting Values
+    % Ti
+    FlEnvErrLoDwnTi(1,i) = FlEnvLoFitDwnc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2); %Ti
+    delFlEnvErrLoDwnTi(1,i) = abs(TiDwn(1,i) - FlEnvErrLoDwnTi(1,i));
+    
+    % Vz
+    FlEnvErrNuShiftLoDwn(1,i) =  FlEnvLoFitDwnb1(1,i); % central frequency found by fitting the Fl. signal with a Gaussian
+    FlEnvErrLoDwnVz(1,i) = c.*FlEnvErrNuShiftLoDwn(1,i)./Nu0_ArIIAbs; % Vz
+    delFlEnvErrLoDwnVz(1,i) = abs(VzDwn(1,i) - FlEnvErrLoDwnVz(1,i)); 
+    
+    % % % % % % % %
+    % UP SCAN
+    % % % % % % % %
+    
+    % HIGH points on UP Scan
+    [xFlErrHiUp, yFlErrHiUp] = prepareCurveData(FlEnvErrLocsHiUp{1,i}.*1e-9, FlEnvErrPksHiUp{1,i});
+    Y0HiUp(1,i) = mean(FlEnvErrPksHiUp{1,i}(1:70,1));
+    
+    % Set up fittype and options.
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0HiUp(1,i) FlpksUp(1,i) NuXAxisUp_Rel(FllocsUp(1,i),i).*1e-9 GWidthHiUpPP(i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width
+
+    FlEnvErrPksHiFitUp{1,i} = fit(xFlErrHiUp, yFlErrHiUp, ft, opts);
+    FlEnvHiFitUpc1(1,i) = FlEnvErrPksHiFitUp{1,i}.c1.*1e9;
+    FlEnvHiFitUpb1(1,i) = FlEnvErrPksHiFitUp{1,i}.b1.*1e9;    
+    
+    % Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+    FlEnvErrGLineHiUp{1,i} = FlEnvErrPksHiFitUp{1,i}.Y0 + FlEnvErrPksHiFitUp{1,i}.a1*exp(-((FlEnvErrLocsHiUp{1,i}-FlEnvHiFitUpb1(1,i))./FlEnvHiFitUpc1(1,i)).^2);
+    
+    % Extracting Values
+    % Ti
+    FlEnvErrHiUpTi(1,i) = FlEnvHiFitUpc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2); %Ti
+    delFlEnvErrHiUpTi(1,i) = abs(FlEnvErrHiUpTi(1,i) - TiUp(1,i));
+    
+    % Vz
+    FlEnvErrNuShiftHiUp(1,i) =  FlEnvHiFitUpb1(1,i); % central frequency found by fitting the Fl. signal with a Gaussian
+    FlEnvErrHiUpVz(1,i) = c.*FlEnvErrNuShiftHiUp(1,i)./Nu0_ArIIAbs; % Vz
+    delFlEnvErrHiUpVz(1,i) = abs(FlEnvErrHiUpVz(1,i) - VzUp(1,i));
+    
+    % % % % %
+    % LOW points on UP Curve
+    % % % % % 
+    [xFlErrLoUp, yFlErrLoUp] = prepareCurveData(FlEnvErrLocsLoUp{1,i}.*1e-9, FlEnvErrPksLoUp{1,i});
+    Y0LoUp(1,i) = mean(FlEnvErrPksLoUp{1,i}(1:70,1));
+    
+    % Set up fittype and options.
+    ft = fittype('Y0+a1*exp(-(x-b1)^2/c1^2)');
+    opts = fitoptions( 'Method', 'NonlinearLeastSquares' );
+    opts.StartPoint = [Y0LoUp(1,i) FlpksUp(1,i) NuXAxisUp_Rel(FllocsUp(1,i),i).*1e-9 GWidthLoUpPP(i)]; % startpoint assigns initial values to coefficients, a= apex height (y), b = apex x position, c = width    
+    
+    FlEnvErrPksLoFitUp{1,i} = fit(xFlErrLoUp, yFlErrLoUp, ft, opts);
+    FlEnvLoFitUpc1(1,i) = FlEnvErrPksLoFitUp{1,i}.c1.*1e9;
+    FlEnvLoFitUpb1(1,i) = FlEnvErrPksLoFitUp{1,i}.b1.*1e9;     
+    
+    % Create central Gaussian line shape on frequency axis from the coefficients from the above fit
+    FlEnvErrGLineLoUp{1,i} = FlEnvErrPksLoFitUp{1,i}.Y0 + FlEnvErrPksLoFitUp{1,i}.a1*exp(-((FlEnvErrLocsLoUp{1,i}-FlEnvLoFitUpb1(1,i))./FlEnvLoFitUpc1(1,i)).^2);
+
+    % Extracting Values
+    % Ti
+    FlEnvErrLoUpTi(1,i) = FlEnvLoFitUpc1(1,i).^2.*mAr.*c^2./(2*elm*Nu0_ArIIAbs^2); %Ti
+    delFlEnvErrLoUpTi(1,i) = abs(TiUp(1,i) - FlEnvErrLoUpTi(1,i));
+    
+    % Vz
+    FlEnvErrNuShiftLoUp(1,i) =  FlEnvLoFitUpb1(1,i); % central frequency found by fitting the Fl. signal with a Gaussian
+    FlEnvErrLoUpVz(1,i) = c.*FlEnvErrNuShiftLoUp(1,i)./Nu0_ArIIAbs; % Vz
+    delFlEnvErrLoUpVz(1,i) = abs(VzUp(1,i) - FlEnvErrLoUpVz(1,i));
+end
+
+%% FINAL Envelope Error
+% Saved in 2xnumFiles arrays; [low side error, High side error]
+% Run after you've finalized the widths
+
+% Absolute value of the difference between Ti value and error, veticall concatenated into an array
+FlEnvErrDwnTi = abs(vertcat(TiDwn -FlEnvErrLoDwnTi, FlEnvErrHiDwnTi- TiDwn)); 
+FlEnvErrUpTi = abs(vertcat(TiUp -FlEnvErrLoUpTi, FlEnvErrHiUpTi- TiUp));
+
+FlEnvErrDwnVz = abs(vertcat(VzDwn -FlEnvErrLoDwnVz, FlEnvErrHiDwnVz- VzDwn));
+FlEnvErrUpVz = abs(vertcat(VzUp -FlEnvErrLoUpVz, FlEnvErrHiUpVz- VzUp));
+
+% % % % % % % % % %
+%% Compile error  %
+% % % % % % % % % %
+% Ti = Envelope Error (FlErr) + 1st Order
+% Vz = Envelope Error + 1st Order
+
+VzDwnErrFinal = zeros(2, numFiles );
+VzUpErrFinal = zeros(2, numFiles );
+
+TiDwnErrFinal = zeros(2, numFiles );
+TiUpErrFinal = zeros(2, numFiles );
+
+% Final Error compiled into arrays for Ti and Vz- Including Envelope error
+for i = 1:numFiles
+    % Vz error: 1st degree of error, 0th method of calculating error - main freq axis, +/- central transition freq
+    VzDwnErrFinal(:,i) = [delVzDwnErrLo0(1,i); delVzDwnErrHi0(1,i)]; %FlEnvErrDwnVz(1,i) + ; FlEnvErrDwnVz(2,i) + 
+    VzUpErrFinal(:,i) = [delVzUpErrLo0(1,i); delVzUpErrHi0(1,i)]; %FlEnvErrUpVz(1,i) + ; FlEnvErrUpVz(2,i) +
+    
+    % Ti error: 1st degree of error, 1st method Error, rel nu error axis + Envelope error. This was the original Error calculation;  Low ; high
+    TiDwnErrFinal(:,i) = [FlEnvErrDwnTi(1,i) + delTiDwnErrLo1(1,i);  FlEnvErrDwnTi(2,i) + delTiDwnErrHi1(1,i)];
+    TiUpErrFinal(:,i) = [FlEnvErrUpTi(1,i) + delTiUpErrLo1(1,i);  FlEnvErrUpTi(2,i) + delTiUpErrHi1(1,i)];
+end
